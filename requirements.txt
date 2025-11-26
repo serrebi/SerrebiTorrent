@@ -1,0 +1,5 @@
+wxPython
+requests
+beautifulsoup4
+qbittorrent-api
+transmission-rpc
