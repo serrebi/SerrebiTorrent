@@ -23,6 +23,33 @@ COL_DONE = 2
 COL_UP = 3
 COL_RATIO = 4
 COL_STATUS = 5
+APP_NAME = "SerrebiTorrent"
+
+
+def get_app_icon():
+    """Return a wx.Icon for the tray and main window, with a safe fallback."""
+    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    icon_path = os.path.join(base_dir, "icon.ico")
+
+    if os.path.exists(icon_path):
+        try:
+            return wx.Icon(icon_path, wx.BITMAP_TYPE_ICO)
+        except Exception:
+            pass
+
+    bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (16, 16))
+    if not bmp.IsOk():
+        bmp = wx.Bitmap(16, 16)
+        dc = wx.MemoryDC(bmp)
+        dc.SetBackground(wx.Brush(wx.Colour(0, 0, 0)))
+        dc.Clear()
+        dc.SelectObject(wx.NullBitmap)
+
+    fallback_icon = wx.Icon()
+    fallback_icon.CopyFromBitmap(bmp)
+    return fallback_icon
+
+
 
 def register_associations():
     """Registers file associations for .torrent and magnet: links on Windows."""
@@ -431,39 +458,69 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
     def __init__(self, frame):
         super().__init__()
         self.frame = frame
-        # Use application icon
-        if os.path.exists("icon.ico"):
-             icon = wx.Icon("icon.ico", wx.BITMAP_TYPE_ICO)
-             self.SetIcon(icon, "SerrebiTorrent")
-        else:
-             # Fallback generic icon logic or empty
-             pass
-             
+        self.SetIcon(get_app_icon(), APP_NAME)
         self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.on_double_click)
-    
+
     def CreatePopupMenu(self):
         menu = wx.Menu()
         restore = menu.Append(wx.ID_ANY, "Restore")
-        exit = menu.Append(wx.ID_EXIT, "Exit")
         self.Bind(wx.EVT_MENU, self.on_restore, restore)
-        self.Bind(wx.EVT_MENU, self.on_exit, exit)
+
+        menu.AppendSeparator()
+        start_item = menu.Append(wx.ID_ANY, "Start")
+        stop_item = menu.Append(wx.ID_ANY, "Stop")
+        pause_item = menu.Append(wx.ID_ANY, "Pause")
+        resume_item = menu.Append(wx.ID_ANY, "Resume")
+        self.Bind(wx.EVT_MENU, self.on_start, start_item)
+        self.Bind(wx.EVT_MENU, self.on_stop, stop_item)
+        self.Bind(wx.EVT_MENU, self.on_pause, pause_item)
+        self.Bind(wx.EVT_MENU, self.on_resume, resume_item)
+
+        menu.AppendSeparator()
+        profile_menu = wx.Menu()
+        profiles = self.frame.config_manager.get_profiles()
+        if profiles:
+            for pid, profile in profiles.items():
+                label = profile.get("name") or pid
+                item = profile_menu.Append(wx.ID_ANY, label)
+                self.Bind(wx.EVT_MENU, lambda event, pid=pid: self.on_switch_profile(pid), item)
+        else:
+            empty = profile_menu.Append(wx.ID_ANY, "No Profiles Configured")
+            empty.Enable(False)
+        menu.AppendSubMenu(profile_menu, "Switch Profile")
+
+        menu.AppendSeparator()
+        exit_item = menu.Append(wx.ID_EXIT, "Exit")
+        self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
         return menu
 
     def on_double_click(self, event):
         self.on_restore(event)
 
     def on_restore(self, event):
-        if not self.frame.IsShown():
-            self.frame.Show()
-        self.frame.Restore()
-        self.frame.Raise()
+        self.frame.show_from_tray()
+
+    def on_start(self, event):
+        wx.CallAfter(self.frame.on_start, None)
+
+    def on_stop(self, event):
+        wx.CallAfter(self.frame.on_stop, None)
+
+    def on_pause(self, event):
+        wx.CallAfter(self.frame.on_pause, None)
+
+    def on_resume(self, event):
+        wx.CallAfter(self.frame.on_resume, None)
+
+    def on_switch_profile(self, profile_id):
+        wx.CallAfter(self.frame.connect_profile, profile_id)
 
     def on_exit(self, event):
         self.frame.force_close()
 
 class MainFrame(wx.Frame):
     def __init__(self):
-        super().__init__(None, title="SerrebiTorrent", size=(1200, 800))
+        super().__init__(None, title=APP_NAME, size=(1200, 800))
         
         self.config_manager = ConfigManager()
         
@@ -484,9 +541,7 @@ class MainFrame(wx.Frame):
         
         # Taskbar Icon
         self.tb_icon = TaskBarIcon(self)
-        # Set icon for frame too
-        if os.path.exists("icon.ico"):
-             self.SetIcon(wx.Icon("icon.ico", wx.BITMAP_TYPE_ICO))
+        self.SetIcon(get_app_icon())
         
         # Menu Bar
         menubar = wx.MenuBar()
@@ -572,6 +627,13 @@ class MainFrame(wx.Frame):
         
         # Attempt auto-connect
         wx.CallAfter(self.try_auto_connect)
+
+    def show_from_tray(self):
+        if not self.IsShown():
+            self.Show()
+        if self.IsIconized():
+            self.Restore()
+        self.Raise()
 
     def on_prefs(self, event):
         dlg = PreferencesDialog(self, self.config_manager)
@@ -798,17 +860,43 @@ class MainFrame(wx.Frame):
                     wx.LogError(f"Error adding URL: {e}")
         dlg.Destroy()
 
-    def on_start(self, event):
+    def _apply_to_selected(self, action, label):
+        if not self.client or not action:
+            if hasattr(self, "statusbar"):
+                self.statusbar.SetStatusText("Not connected to any client.", 0)
+            return
+
         hashes = self.torrent_list.get_selected_hashes()
+        if not hashes:
+            message = f"No torrents selected to {label.lower()}."
+            if hasattr(self, "statusbar"):
+                self.statusbar.SetStatusText(message, 0)
+            else:
+                print(message)
+            return
+
         for h in hashes:
-            self.client.start_torrent(h)
+            try:
+                action(h)
+            except Exception as e:
+                wx.LogError(f"Failed to {label.lower()} torrent: {e}")
         self.refresh_data()
 
+    def on_start(self, event):
+        action = self.client.start_torrent if self.client else None
+        self._apply_to_selected(action, "Start")
+
     def on_stop(self, event):
-        hashes = self.torrent_list.get_selected_hashes()
-        for h in hashes:
-            self.client.stop_torrent(h)
-        self.refresh_data()
+        action = self.client.stop_torrent if self.client else None
+        self._apply_to_selected(action, "Stop")
+
+    def on_pause(self, event):
+        action = self.client.stop_torrent if self.client else None
+        self._apply_to_selected(action, "Pause")
+
+    def on_resume(self, event):
+        action = self.client.start_torrent if self.client else None
+        self._apply_to_selected(action, "Resume")
 
     def on_remove(self, event):
         hashes = self.torrent_list.get_selected_hashes()
