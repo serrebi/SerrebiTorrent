@@ -61,6 +61,22 @@ class SessionManager:
         self.load_state()
 
     def apply_preferences(self, prefs):
+        # Proxy Mapping
+        # 0=None, 1=SOCKS4, 2=SOCKS5, 3=HTTP
+        p_type = prefs.get('proxy_type', 0)
+        lt_proxy_type = lt.proxy_type_t.none
+        
+        if p_type == 1:
+            lt_proxy_type = lt.proxy_type_t.socks4
+        elif p_type == 2:
+            lt_proxy_type = lt.proxy_type_t.socks5
+            if prefs.get('proxy_user'):
+                lt_proxy_type = lt.proxy_type_t.socks5_pw
+        elif p_type == 3:
+            lt_proxy_type = lt.proxy_type_t.http
+            if prefs.get('proxy_user'):
+                lt_proxy_type = lt.proxy_type_t.http_pw
+
         settings = {
             'user_agent': 'qBittorrent/4.6.3',
             'peer_fingerprint': b'-qB4630-',
@@ -78,6 +94,13 @@ class SessionManager:
             # 'upload_slots_limit': prefs.get('max_uploads', -1), # Removed as it causes error in newer libtorrent
             'download_rate_limit': prefs.get('dl_limit', 0),
             'upload_rate_limit': prefs.get('ul_limit', 0),
+
+            # Proxy
+            'proxy_type': lt_proxy_type,
+            'proxy_hostname': prefs.get('proxy_host', ''),
+            'proxy_port': prefs.get('proxy_port', 8080),
+            'proxy_username': prefs.get('proxy_user', ''),
+            'proxy_password': prefs.get('proxy_password', '')
         }
         
         # Listen Port
@@ -118,7 +141,7 @@ class SessionManager:
         except Exception as e:
             print(f"Error writing resume data: {e}")
 
-    def add_torrent_file(self, file_content, save_path):
+    def add_torrent_file(self, file_content, save_path, file_priorities=None):
         info = lt.torrent_info(file_content)
         ih = str(info.info_hash())
         
@@ -132,6 +155,9 @@ class SessionManager:
             f.write(file_content)
             
         params = {'ti': info, 'save_path': save_path}
+        if file_priorities:
+            params['file_priorities'] = file_priorities
+            
         self.ses.add_torrent(params)
 
     def add_magnet(self, url, save_path):

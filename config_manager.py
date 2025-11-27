@@ -26,7 +26,12 @@ DEFAULT_PREFERENCES = {
     "min_to_tray": True,
     "close_to_tray": True,
     "enable_trackers": True,
-    "tracker_url": "https://raw.githubusercontent.com/scriptzteam/BitTorrent-Tracker-List/refs/heads/main/trackers_best.txt"
+    "tracker_url": "https://raw.githubusercontent.com/scriptzteam/BitTorrent-Tracker-List/refs/heads/main/trackers_best.txt",
+    "proxy_type": 0, # 0=None, 1=SOCKS4, 2=SOCKS5, 3=HTTP
+    "proxy_host": "",
+    "proxy_port": 8080,
+    "proxy_user": "",
+    "proxy_password": ""
 }
 
 DEFAULT_CONFIG = {

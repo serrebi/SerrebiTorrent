@@ -49,6 +49,273 @@ def get_app_icon():
     fallback_icon.CopyFromBitmap(bmp)
     return fallback_icon
 
+try:
+    import libtorrent as lt
+except ImportError:
+    lt = None
+
+def get_app_data_path():
+    if getattr(sys, 'frozen', False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, 'SerrebiTorrent_Data')
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
+
+from config_manager import ConfigManager
+from session_manager import SessionManager
+
+
+# Constants for List Columns
+COL_NAME = 0
+COL_SIZE = 1
+COL_DONE = 2
+COL_UP = 3
+COL_RATIO = 4
+COL_STATUS = 5
+APP_NAME = "SerrebiTorrent"
+
+
+def get_app_icon():
+    """Return a wx.Icon for the tray and main window, with a safe fallback."""
+    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    icon_path = os.path.join(base_dir, "icon.ico")
+
+    if os.path.exists(icon_path):
+        try:
+            return wx.Icon(icon_path, wx.BITMAP_TYPE_ICO)
+        except Exception:
+            pass
+
+    bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (16, 16))
+    if not bmp.IsOk():
+        bmp = wx.Bitmap(16, 16)
+        dc = wx.MemoryDC(bmp)
+        dc.SetBackground(wx.Brush(wx.Colour(0, 0, 0)))
+        dc.Clear()
+        dc.SelectObject(wx.NullBitmap)
+
+    fallback_icon = wx.Icon()
+    fallback_icon.CopyFromBitmap(bmp)
+    return fallback_icon
+
+class AddTorrentDialog(wx.Dialog):
+    def __init__(self, parent, name, file_list=None, default_path=""):
+        super().__init__(parent, title=f"Add Torrent: {name}", size=(600, 500))
+        
+        self.file_list = file_list or []
+        self.item_map = {} # item_id -> {'name': str, 'size': int, 'idx': int or None}
+        
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        # Save Path
+        path_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        path_sizer.Add(wx.StaticText(self, label="Save Path:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.path_input = wx.TextCtrl(self, value=default_path)
+        path_sizer.Add(self.path_input, 1, wx.EXPAND | wx.RIGHT, 5)
+        browse_btn = wx.Button(self, label="Browse...")
+        browse_btn.Bind(wx.EVT_BUTTON, self.on_browse)
+        path_sizer.Add(browse_btn, 0)
+        sizer.Add(path_sizer, 0, wx.EXPAND | wx.ALL, 10)
+        
+        # Files Tree
+        if self.file_list:
+            sizer.Add(wx.StaticText(self, label="Files:"), 0, wx.LEFT | wx.RIGHT, 10)
+            
+            # Standard TreeCtrl with text-based checkboxes
+            self.tree = wx.TreeCtrl(self, style=wx.TR_DEFAULT_STYLE | wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS | wx.TR_LINES_AT_ROOT)
+            self.root = self.tree.AddRoot(name)
+            self.item_map[self.root] = {'name': name, 'size': 0, 'idx': None}
+            
+            self.tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self.on_toggle)
+            self.tree.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
+            self.tree.Bind(wx.EVT_LEFT_DOWN, self.on_click) 
+            self.tree.Bind(wx.EVT_TREE_ITEM_RIGHT_CLICK, self.on_tree_context_menu)
+
+            # Helper to find or create child
+            def get_or_create_child(parent_item, text):
+                (child, cookie) = self.tree.GetFirstChild(parent_item)
+                while child.IsOk():
+                    if self.item_map[child]['name'] == text:
+                        return child
+                    (child, cookie) = self.tree.GetNextChild(parent_item, cookie)
+                
+                item = self.tree.AppendItem(parent_item, "")
+                self.item_map[item] = {'name': text, 'size': 0, 'idx': None}
+                self.update_item_label(item, True) # Default checked
+                return item
+
+            for idx, (fpath, fsize) in enumerate(self.file_list):
+                # Normalize path
+                parts = fpath.replace('\\', '/').split('/')
+                current_item = self.root
+                
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:
+                        # Leaf
+                        item = self.tree.AppendItem(current_item, "")
+                        self.item_map[item] = {'name': part, 'size': fsize, 'idx': idx}
+                        self.update_item_label(item, True)
+                    else:
+                        # Folder
+                        current_item = get_or_create_child(current_item, part)
+            
+            self.tree.ExpandAll()
+            
+            sizer.Add(self.tree, 1, wx.EXPAND | wx.ALL, 10)
+            
+            # Select/Deselect Buttons
+            btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+            sel_all = wx.Button(self, label="Select All")
+            sel_all.Bind(wx.EVT_BUTTON, lambda e: self.set_root_state(True))
+            btn_sizer.Add(sel_all, 0, wx.RIGHT, 5)
+            
+            desel_all = wx.Button(self, label="Deselect All")
+            desel_all.Bind(wx.EVT_BUTTON, lambda e: self.set_root_state(False))
+            btn_sizer.Add(desel_all, 0)
+            
+            sizer.Add(btn_sizer, 0, wx.ALIGN_LEFT | wx.LEFT | wx.BOTTOM, 10)
+        else:
+            sizer.Add(wx.StaticText(self, label="File list not available (Magnet link)."), 0, wx.ALL, 20)
+        
+        # Dialog Buttons
+        btns = wx.StdDialogButtonSizer()
+        btns.AddButton(wx.Button(self, wx.ID_OK))
+        btns.AddButton(wx.Button(self, wx.ID_CANCEL))
+        btns.Realize()
+        sizer.Add(btns, 0, wx.ALIGN_CENTER | wx.ALL, 10)
+        
+        self.SetSizer(sizer)
+        self.Center()
+
+    def on_browse(self, event):
+        dlg = wx.DirDialog(self, "Choose Download Directory", self.path_input.GetValue())
+        if dlg.ShowModal() == wx.ID_OK:
+            self.path_input.SetValue(dlg.GetPath())
+        dlg.Destroy()
+
+    def fmt_size(self, size):
+        if size == 0: return ""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"
+
+    def update_item_label(self, item, checked):
+        data = self.item_map.get(item)
+        if not data: return
+        
+        prefix = "[x]" if checked else "[ ]"
+        size_str = f" ({self.fmt_size(data['size'])})" if data['size'] > 0 else ""
+        
+        label = f"{prefix} {data['name']}{size_str}"
+        self.tree.SetItemText(item, label)
+
+    def is_checked(self, item):
+        txt = self.tree.GetItemText(item)
+        return txt.startswith("[x]")
+
+    def on_toggle(self, event):
+        item = event.GetItem()
+        if item.IsOk():
+            self.toggle_item(item)
+
+    def on_key_down(self, event):
+        code = event.GetKeyCode()
+        if code == wx.WXK_SPACE:
+            item = self.tree.GetSelection()
+            if item.IsOk():
+                self.toggle_item(item)
+        else:
+            event.Skip()
+            
+    def on_click(self, event):
+        event.Skip()
+
+    def on_tree_context_menu(self, event):
+        item = event.GetItem()
+        if not item.IsOk():
+            item = self.tree.GetSelection()
+        
+        if not item.IsOk(): return
+
+        menu = wx.Menu()
+        check_item = menu.Append(wx.ID_ANY, "Check")
+        uncheck_item = menu.Append(wx.ID_ANY, "Uncheck")
+        menu.AppendSeparator()
+        check_all = menu.Append(wx.ID_ANY, "Check All")
+        uncheck_all = menu.Append(wx.ID_ANY, "Uncheck All")
+
+        self.Bind(wx.EVT_MENU, lambda e: self.set_item_state_recursive(item, True), check_item)
+        self.Bind(wx.EVT_MENU, lambda e: self.set_item_state_recursive(item, False), uncheck_item)
+        self.Bind(wx.EVT_MENU, lambda e: self.set_root_state(True), check_all)
+        self.Bind(wx.EVT_MENU, lambda e: self.set_root_state(False), uncheck_all)
+
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def toggle_item(self, item):
+        new_state = not self.is_checked(item)
+        self.set_item_state_recursive(item, new_state)
+
+    def set_item_state_recursive(self, item, state):
+        self.update_item_label(item, state)
+        self.update_children(item, state)
+        
+        # Update parent up the chain
+        parent = self.tree.GetItemParent(item)
+        while parent.IsOk() and parent != self.root:
+            self.update_parent(parent)
+            parent = self.tree.GetItemParent(parent)
+
+    def update_children(self, parent, state):
+        (child, cookie) = self.tree.GetFirstChild(parent)
+        while child.IsOk():
+            self.update_item_label(child, state)
+            self.update_children(child, state)
+            (child, cookie) = self.tree.GetNextChild(parent, cookie)
+
+    def update_parent(self, parent):
+        has_checked = False
+        (child, cookie) = self.tree.GetFirstChild(parent)
+        while child.IsOk():
+            if self.is_checked(child):
+                has_checked = True
+                break
+            (child, cookie) = self.tree.GetNextChild(parent, cookie)
+        self.update_item_label(parent, has_checked)
+
+    def set_root_state(self, state):
+        (child, cookie) = self.tree.GetFirstChild(self.root)
+        while child.IsOk():
+            self.set_item_state_recursive(child, state)
+            (child, cookie) = self.tree.GetNextChild(self.root, cookie)
+
+    def get_selected_path(self):
+        return self.path_input.GetValue()
+
+    def get_file_priorities(self):
+        if not self.file_list:
+            return None
+        priorities = [0] * len(self.file_list)
+        
+        def traverse(item):
+            if not item.IsOk(): return
+            
+            data = self.item_map.get(item)
+            if data and data['idx'] is not None:
+                priorities[data['idx']] = 1 if self.is_checked(item) else 0
+                
+            (child, cookie) = self.tree.GetFirstChild(item)
+            while child.IsOk():
+                traverse(child)
+                (child, cookie) = self.tree.GetNextChild(item, cookie)
+
+        traverse(self.root)
+        return priorities
 
 
 def register_associations():
@@ -419,6 +686,47 @@ class PreferencesDialog(wx.Dialog):
         track_panel.SetSizer(track_sizer)
         notebook.AddPage(track_panel, "Trackers")
         
+        # --- Proxy Tab ---
+        proxy_panel = wx.Panel(notebook)
+        proxy_sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        # Proxy Type
+        proxy_sizer.Add(wx.StaticText(proxy_panel, label="Proxy Type:"), 0, wx.ALL, 5)
+        self.proxy_type = wx.Choice(proxy_panel, choices=["None", "SOCKS4", "SOCKS5", "HTTP"])
+        self.proxy_type.SetSelection(self.prefs.get('proxy_type', 0))
+        proxy_sizer.Add(self.proxy_type, 0, wx.EXPAND | wx.ALL, 5)
+        
+        # Host & Port
+        hp_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        hp_sizer.Add(wx.StaticText(proxy_panel, label="Host:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.proxy_host = wx.TextCtrl(proxy_panel, value=self.prefs.get('proxy_host', ''))
+        hp_sizer.Add(self.proxy_host, 1, wx.EXPAND | wx.RIGHT, 10)
+        
+        hp_sizer.Add(wx.StaticText(proxy_panel, label="Port:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.proxy_port = wx.SpinCtrl(proxy_panel, min=1, max=65535, initial=self.prefs.get('proxy_port', 8080))
+        hp_sizer.Add(self.proxy_port, 0)
+        
+        proxy_sizer.Add(hp_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        
+        # Auth
+        proxy_sizer.Add(wx.StaticText(proxy_panel, label="Authentication (if required):"), 0, wx.TOP | wx.LEFT, 10)
+        
+        user_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        user_sizer.Add(wx.StaticText(proxy_panel, label="Username:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.proxy_user = wx.TextCtrl(proxy_panel, value=self.prefs.get('proxy_user', ''))
+        user_sizer.Add(self.proxy_user, 1, wx.EXPAND)
+        proxy_sizer.Add(user_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        
+        pass_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        pass_sizer.Add(wx.StaticText(proxy_panel, label="Password:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.proxy_pass = wx.TextCtrl(proxy_panel, value=self.prefs.get('proxy_password', ''), style=wx.TE_PASSWORD)
+        pass_sizer.Add(self.proxy_pass, 1, wx.EXPAND)
+        proxy_sizer.Add(pass_sizer, 0, wx.EXPAND | wx.ALL, 5)
+
+        proxy_panel.SetSizer(proxy_sizer)
+        notebook.AddPage(proxy_panel, "Proxy")
+        
         sizer.Add(notebook, 1, wx.EXPAND | wx.ALL, 5)
         
         # Buttons
@@ -451,7 +759,12 @@ class PreferencesDialog(wx.Dialog):
             "enable_upnp": self.upnp_chk.GetValue(),
             "enable_natpmp": self.natpmp_chk.GetValue(),
             "enable_trackers": self.track_chk.GetValue(),
-            "tracker_url": self.track_url_input.GetValue()
+            "tracker_url": self.track_url_input.GetValue(),
+            "proxy_type": self.proxy_type.GetSelection(),
+            "proxy_host": self.proxy_host.GetValue(),
+            "proxy_port": self.proxy_port.GetValue(),
+            "proxy_user": self.proxy_user.GetValue(),
+            "proxy_password": self.proxy_pass.GetValue()
         }
 
 class TaskBarIcon(wx.adv.TaskBarIcon):
@@ -459,7 +772,10 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         super().__init__()
         self.frame = frame
         self.SetIcon(get_app_icon(), APP_NAME)
-        self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.on_double_click)
+        # Bind both double click and single click (UP) to restore.
+        # This ensures Enter (often mapped to click/dblclick) and single left click open the app.
+        self.Bind(wx.adv.EVT_TASKBAR_LEFT_DCLICK, self.on_restore)
+        self.Bind(wx.adv.EVT_TASKBAR_LEFT_UP, self.on_restore)
 
     def CreatePopupMenu(self):
         menu = wx.Menu()
@@ -835,9 +1151,32 @@ class MainFrame(wx.Frame):
             try:
                 with open(path, 'rb') as f:
                     data = f.read()
-                if self.client:
-                    self.client.add_torrent_file(data)
-                    self.refresh_data()
+                
+                # Parse torrent info for dialog
+                file_list = []
+                name = "Unknown"
+                if lt:
+                    try:
+                        info = lt.torrent_info(data)
+                        name = info.name()
+                        num = info.num_files()
+                        file_list = [(info.files().file_path(i), info.files().file_size(i)) for i in range(num)]
+                    except Exception as e:
+                        print(f"Failed to parse torrent info: {e}")
+
+                # Get default path
+                default_path = self.config_manager.get_preferences().get('download_path', '')
+                
+                dlg = AddTorrentDialog(self, name, file_list, default_path)
+                if dlg.ShowModal() == wx.ID_OK:
+                    save_path = dlg.get_selected_path()
+                    priorities = dlg.get_file_priorities()
+                    
+                    if self.client:
+                        self.client.add_torrent_file(data, save_path, priorities)
+                        self.refresh_data()
+                dlg.Destroy()
+
             except Exception as e:
                 wx.LogError(f"Error adding file: {e}")
 
@@ -847,15 +1186,54 @@ class MainFrame(wx.Frame):
             url = dlg.GetValue()
             if self.client:
                 try:
+                    # Get default path
+                    default_path = self.config_manager.get_preferences().get('download_path', '')
+
                     if url.startswith("magnet:"):
-                        trackers = self.fetch_trackers()
-                        if trackers:
-                            import urllib.parse
-                            for t in trackers:
-                                url += f"&tr={urllib.parse.quote(t)}"
-                    
-                    self.client.add_torrent_url(url)
-                    self.refresh_data()
+                        # For magnets, we can't see files yet, but user can set path
+                        adlg = AddTorrentDialog(self, "Magnet Link", None, default_path)
+                        if adlg.ShowModal() == wx.ID_OK:
+                            save_path = adlg.get_selected_path()
+                            
+                            trackers = self.fetch_trackers()
+                            if trackers:
+                                import urllib.parse
+                                for t in trackers:
+                                    url += f"&tr={urllib.parse.quote(t)}"
+                        
+                            self.client.add_torrent_url(url, save_path)
+                            self.refresh_data()
+                        adlg.Destroy()
+
+                    elif url.startswith(("http://", "https://")):
+                        # Download .torrent file first
+                        try:
+                            r = requests.get(url, timeout=30)
+                            r.raise_for_status()
+                            data = r.content
+                            
+                            # Parse and show dialog (reuse on_add_file logic mostly)
+                            file_list = []
+                            name = "Unknown"
+                            if lt:
+                                try:
+                                    info = lt.torrent_info(data)
+                                    name = info.name()
+                                    num = info.num_files()
+                                    file_list = [(info.files().file_path(i), info.files().file_size(i)) for i in range(num)]
+                                except: pass
+                            
+                            adlg = AddTorrentDialog(self, name, file_list, default_path)
+                            if adlg.ShowModal() == wx.ID_OK:
+                                save_path = adlg.get_selected_path()
+                                priorities = adlg.get_file_priorities()
+                                self.client.add_torrent_file(data, save_path, priorities)
+                                self.refresh_data()
+                            adlg.Destroy()
+                            
+                        except Exception as e:
+                             wx.LogError(f"Failed to download torrent from URL: {e}")
+
                 except Exception as e:
                     wx.LogError(f"Error adding URL: {e}")
         dlg.Destroy()

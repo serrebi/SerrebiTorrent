@@ -49,11 +49,11 @@ class BaseClient(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def add_torrent_url(self, url):
+    def add_torrent_url(self, url, save_path=None):
         pass
 
     @abc.abstractmethod
-    def add_torrent_file(self, file_content):
+    def add_torrent_file(self, file_content, save_path=None, file_priorities=None):
         pass
 
     @abc.abstractmethod
@@ -282,10 +282,11 @@ class RTorrentClient(BaseClient):
     def remove_torrent_with_data(self, info_hash):
         self.server.d.erase(info_hash)
 
-    def add_torrent_url(self, url):
+    def add_torrent_url(self, url, save_path=None):
+        # Note: rTorrent load.start supports target path via command modification, but simplified here.
         self.server.load.start("", url)
 
-    def add_torrent_file(self, file_content):
+    def add_torrent_file(self, file_content, save_path=None, file_priorities=None):
         self.server.load.raw_start("", xmlrpc.client.Binary(file_content))
 
     def get_global_stats(self):
@@ -365,11 +366,15 @@ class QBittorrentClient(BaseClient):
     def remove_torrent_with_data(self, info_hash):
         self.client.torrents_delete(torrent_hashes=info_hash, delete_files=True)
 
-    def add_torrent_url(self, url):
-        self.client.torrents_add(urls=url)
+    def add_torrent_url(self, url, save_path=None):
+        kwargs = {}
+        if save_path: kwargs['save_path'] = save_path
+        self.client.torrents_add(urls=url, **kwargs)
 
-    def add_torrent_file(self, file_content):
-        self.client.torrents_add(torrent_files=file_content)
+    def add_torrent_file(self, file_content, save_path=None, file_priorities=None):
+        kwargs = {}
+        if save_path: kwargs['save_path'] = save_path
+        self.client.torrents_add(torrent_files=file_content, **kwargs)
 
     def get_global_stats(self):
         info = self.client.transfer_info()
@@ -450,16 +455,20 @@ class TransmissionClient(BaseClient):
     def remove_torrent_with_data(self, info_hash):
         self.client.remove_torrent(info_hash, delete_data=True)
 
-    def add_torrent_url(self, url):
-        self.client.add_torrent(url)
+    def add_torrent_url(self, url, save_path=None):
+        kwargs = {}
+        if save_path: kwargs['download_dir'] = save_path
+        self.client.add_torrent(url, **kwargs)
 
-    def add_torrent_file(self, file_content):
+    def add_torrent_file(self, file_content, save_path=None, file_priorities=None):
         # Transmission-rpc expects base64 encoded binary string for 'metainfo' usually,
         # but library handles bytes if passed to add_torrent(filename=...) ?
         # Actually library expects file path or url. For raw data, we might need base64.
         import base64
         b64 = base64.b64encode(file_content).decode('utf-8')
-        self.client.add_torrent(b64)
+        kwargs = {}
+        if save_path: kwargs['download_dir'] = save_path
+        self.client.add_torrent(b64, **kwargs)
 
     def get_global_stats(self):
         s = self.client.session_stats()
@@ -485,6 +494,15 @@ class LocalClient(BaseClient):
         self.download_path = download_path if download_path and os.path.isdir(download_path) else os.getcwd()
         
         # Session is managed globally now.
+
+    def _get_effective_download_path(self):
+        from config_manager import ConfigManager
+        cm = ConfigManager()
+        prefs = cm.get_preferences()
+        path = prefs.get('download_path')
+        if path and os.path.isdir(path):
+            return path
+        return self.download_path
 
     def test_connection(self):
         return f"libtorrent {lt.version}"
@@ -557,25 +575,28 @@ class LocalClient(BaseClient):
     def remove_torrent_with_data(self, info_hash):
         self.manager.remove_torrent(info_hash, delete_files=True)
 
-    def add_torrent_url(self, url):
+    def add_torrent_url(self, url, save_path=None):
+        # Use passed save_path or default
+        final_path = save_path if save_path else self._get_effective_download_path()
+        
         if url.startswith("magnet:"):
-            self.manager.add_magnet(url, self.download_path)
+            self.manager.add_magnet(url, final_path)
         elif url.startswith(("http://", "https://")):
             # Download .torrent file
             try:
                 r = requests.get(url, timeout=30)
                 r.raise_for_status()
                 content = r.content
-                # Simple check for torrent content (starts with 'd' and contains 'announce' or 'info')
-                # Or just trust libtorrent to parse it.
-                self.manager.add_torrent_file(content, self.download_path)
+                self.manager.add_torrent_file(content, final_path)
             except Exception as e:
                 raise Exception(f"Failed to download torrent from URL: {e}")
         else:
             raise ValueError(f"Unsupported URL scheme: {url}")
 
-    def add_torrent_file(self, file_content):
-        self.manager.add_torrent_file(file_content, self.download_path)
+    def add_torrent_file(self, file_content, save_path=None, file_priorities=None):
+        # Use passed save_path or default
+        final_path = save_path if save_path else self._get_effective_download_path()
+        self.manager.add_torrent_file(file_content, final_path, file_priorities)
 
     def get_global_stats(self):
         st = self.manager.get_status()
