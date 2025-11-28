@@ -10,6 +10,7 @@ import wx.adv
 import threading
 import json
 import requests # Added for downloading torrent files from URL
+import concurrent.futures
 
 from clients import RTorrentClient, QBittorrentClient, TransmissionClient, LocalClient
 from config_manager import ConfigManager
@@ -850,6 +851,8 @@ class MainFrame(wx.Frame):
         self.connected = False
         self.all_torrents = [] 
         self.current_filter = "All"
+        self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.refreshing = False
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_timer, self.timer)
         self.Bind(wx.EVT_CLOSE, self.on_close)
@@ -909,8 +912,10 @@ class MainFrame(wx.Frame):
         self.cat_ids = {}
         self.cat_ids["All"] = self.sidebar.AppendItem(self.root_id, "All")
         self.cat_ids["Downloading"] = self.sidebar.AppendItem(self.root_id, "Downloading")
-        self.cat_ids["Complete"] = self.sidebar.AppendItem(self.root_id, "Complete")
-        self.cat_ids["Active"] = self.sidebar.AppendItem(self.root_id, "Active")
+        self.cat_ids["Finished"] = self.sidebar.AppendItem(self.root_id, "Finished")
+        self.cat_ids["Seeding"] = self.sidebar.AppendItem(self.root_id, "Seeding")
+        self.cat_ids["Stopped"] = self.sidebar.AppendItem(self.root_id, "Stopped")
+        self.cat_ids["Failed"] = self.sidebar.AppendItem(self.root_id, "Failed")
         self.trackers_root = self.sidebar.AppendItem(self.root_id, "Trackers")
         self.tracker_items = {} 
         self.sidebar.SelectItem(self.cat_ids["All"])
@@ -1039,14 +1044,19 @@ class MainFrame(wx.Frame):
             self.refresh_data()
 
     def refresh_data(self):
-        if not self.client: return
+        if not self.client or self.refreshing: return
         
+        self.refreshing = True
+        filter_mode = self.current_filter
+        self.thread_pool.submit(self._fetch_and_process_data, filter_mode)
+
+    def _fetch_and_process_data(self, filter_mode):
         try:
             torrents = self.client.get_torrents_full()
-            self.all_torrents = torrents
             
             display_data = []
-            stats = {"All": 0, "Downloading": 0, "Complete": 0, "Active": 0}
+            stats = {"All": 0, "Downloading": 0, "Finished": 0, "Seeding": 0, "Stopped": 0, "Failed": 0}
+            tracker_counts = {}
             
             for t in torrents:
                 name = t.get('name', 'Unknown')
@@ -1069,6 +1079,7 @@ class MainFrame(wx.Frame):
                 msg = t.get('message', '')
                 down_rate = t.get('down_rate', 0)
                 up_rate = t.get('up_rate', 0)
+                tracker_domain = t.get('tracker_domain', 'Unknown') or 'Unknown'
                 
                 status_str = "Stopped"
                 if hashing:
@@ -1085,33 +1096,81 @@ class MainFrame(wx.Frame):
 
                 t_hash = t.get('hash', '')
                 
+                is_seeding = (state == 1 and pct >= 100)
+                is_stopped = (state == 0)
+                is_error = (len(msg) > 0)
+                
                 stats["All"] += 1
                 if state == 1 and pct < 100: stats["Downloading"] += 1
-                if pct >= 100: stats["Complete"] += 1
-                if active == 1: stats["Active"] += 1
+                if pct >= 100: stats["Finished"] += 1
+                if is_seeding: stats["Seeding"] += 1
+                if is_stopped: stats["Stopped"] += 1
+                if is_error: stats["Failed"] += 1
+                
+                tracker_counts[tracker_domain] = tracker_counts.get(tracker_domain, 0) + 1
                     
                 include = False
-                if self.current_filter == "All": include = True
-                elif self.current_filter == "Downloading" and state == 1 and pct < 100: include = True
-                elif self.current_filter == "Complete" and pct >= 100: include = True
-                elif self.current_filter == "Active" and active == 1: include = True
+                if filter_mode == "All": include = True
+                elif filter_mode == "Downloading" and state == 1 and pct < 100: include = True
+                elif filter_mode == "Finished" and pct >= 100: include = True
+                elif filter_mode == "Seeding" and is_seeding: include = True
+                elif filter_mode == "Stopped" and is_stopped: include = True
+                elif filter_mode == "Failed" and is_error: include = True
+                elif filter_mode == tracker_domain: include = True
                 
                 if include:
                     display_data.append([name, size, progress, uploaded, ratio, status_str, t_hash])
             
-            self.torrent_list.update_data(display_data)
-            
-            for key, item_id in self.cat_ids.items():
-                self.sidebar.SetItemText(item_id, f"{key} ({stats[key]})")
-                
+            g_down, g_up = 0, 0
             try:
                 g_down, g_up = self.client.get_global_stats()
-                if self.connected:
-                    self.statusbar.SetStatusText(f"DL: {self.fmt_size(g_down)}/s | UL: {self.fmt_size(g_up)}/s", 1)
             except: pass
-
+            
+            wx.CallAfter(self._on_refresh_complete, torrents, display_data, stats, tracker_counts, g_down, g_up)
+            
         except Exception as e:
-            print(f"Refresh error: {e}")
+            wx.CallAfter(self._on_refresh_error, e)
+
+    def _on_refresh_complete(self, torrents, display_data, stats, tracker_counts, g_down, g_up):
+        self.refreshing = False
+        if not self.connected: return
+
+        self.all_torrents = torrents
+        self.torrent_list.update_data(display_data)
+        
+        for key, item_id in self.cat_ids.items():
+            self.sidebar.SetItemText(item_id, f"{key} ({stats[key]})")
+            
+        # Update Trackers
+        # 1. Update or Add
+        for tracker, count in tracker_counts.items():
+            label = f"{tracker} ({count})"
+            if tracker in self.tracker_items:
+                # Update existing
+                item_id = self.tracker_items[tracker]
+                if self.sidebar.GetItemText(item_id) != label:
+                    self.sidebar.SetItemText(item_id, label)
+            else:
+                # Add new
+                item_id = self.sidebar.AppendItem(self.trackers_root, label)
+                self.tracker_items[tracker] = item_id
+        
+        # 2. Remove old (optional, but good for cleanup)
+        to_remove = []
+        for tracker, item_id in self.tracker_items.items():
+            if tracker not in tracker_counts:
+                self.sidebar.Delete(item_id)
+                to_remove.append(tracker)
+        for t in to_remove:
+            del self.tracker_items[t]
+            
+        self.sidebar.Expand(self.trackers_root)
+
+        self.statusbar.SetStatusText(f"DL: {self.fmt_size(g_down)}/s | UL: {self.fmt_size(g_up)}/s", 1)
+
+    def _on_refresh_error(self, e):
+        self.refreshing = False
+        print(f"Refresh error: {e}")
 
     def fmt_size(self, size):
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -1253,12 +1312,16 @@ class MainFrame(wx.Frame):
                 print(message)
             return
 
-        for h in hashes:
-            try:
+        self.statusbar.SetStatusText(f"{label}ing torrents...", 0)
+        self.thread_pool.submit(self._apply_background, action, hashes, label)
+
+    def _apply_background(self, action, hashes, label):
+        try:
+            for h in hashes:
                 action(h)
-            except Exception as e:
-                wx.LogError(f"Failed to {label.lower()} torrent: {e}")
-        self.refresh_data()
+            wx.CallAfter(self._on_action_complete, f"{label} complete")
+        except Exception as e:
+            wx.CallAfter(self._on_action_error, f"Failed to {label.lower()} torrent: {e}")
 
     def on_start(self, event):
         action = self.client.start_torrent if self.client else None
@@ -1279,16 +1342,33 @@ class MainFrame(wx.Frame):
     def on_remove(self, event):
         hashes = self.torrent_list.get_selected_hashes()
         if hashes and wx.MessageBox(f"Remove {len(hashes)} torrents?", "Confirm", wx.YES_NO) == wx.YES:
-            for h in hashes:
-                self.client.remove_torrent(h)
-            self.refresh_data()
+            self.statusbar.SetStatusText("Removing torrents...", 0)
+            self.thread_pool.submit(self._remove_background, hashes, False)
             
     def on_remove_data(self, event):
         hashes = self.torrent_list.get_selected_hashes()
         if hashes and wx.MessageBox(f"Remove {len(hashes)} torrents AND DATA?", "Confirm", wx.YES_NO | wx.ICON_WARNING) == wx.YES:
+            self.statusbar.SetStatusText("Removing torrents and data...", 0)
+            self.thread_pool.submit(self._remove_background, hashes, True)
+
+    def _remove_background(self, hashes, with_data):
+        try:
             for h in hashes:
-                self.client.remove_torrent_with_data(h)
-            self.refresh_data()
+                if with_data:
+                    self.client.remove_torrent_with_data(h)
+                else:
+                    self.client.remove_torrent(h)
+            wx.CallAfter(self._on_action_complete, "Removed torrents")
+        except Exception as e:
+            wx.CallAfter(self._on_action_error, f"Remove failed: {e}")
+
+    def _on_action_complete(self, msg):
+        self.statusbar.SetStatusText(msg, 0)
+        self.refresh_data()
+
+    def _on_action_error(self, msg):
+         wx.MessageBox(msg, "Error", wx.OK | wx.ICON_ERROR)
+         self.statusbar.SetStatusText("Error occurred", 0)
 
     def on_select_all(self, event):
         count = self.torrent_list.GetItemCount()

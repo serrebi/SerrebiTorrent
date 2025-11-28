@@ -316,10 +316,10 @@ class QBittorrentClient(BaseClient):
                 state_val = 0
                 active_val = 0
                 hashing_val = 0
-                # qBit states: error, missingFiles, uploading, pausedUP, queuedUP, stallingUP, checkingUP, forcedUP, allocating, downloading, metaDL, pausedDL, queuedDL, stallingDL, checkingDL, forcedDL, checkingResumeData, moving, unknown
+                # qBit states: error, missingFiles, uploading, pausedUP, queuedUP, stalledUP, checkingUP, forcedUP, allocating, downloading, metaDL, pausedDL, queuedDL, stalledDL, checkingDL, forcedDL, checkingResumeData, moving, unknown
                 
                 s = t.state
-                if s in ['downloading', 'uploading', 'stallingDL', 'stallingUP', 'metaDL', 'forcedDL', 'forcedUP']:
+                if s in ['downloading', 'uploading', 'stalledDL', 'stalledUP', 'stallingDL', 'stallingUP', 'metaDL', 'forcedDL', 'forcedUP', 'queuedDL', 'queuedUP']:
                     state_val = 1 # Started
                     active_val = 1 # Active
                 elif s in ['pausedDL', 'pausedUP']:

@@ -12,12 +12,21 @@
 - Libtorrent DLL resolution happens in `libtorrent_env.py`. Always call `prepare_libtorrent_dlls()` before importing `libtorrent`.
 - OpenSSL 1.1 DLLs (`libcrypto-1_1*.dll`, `libssl-1_1*.dll`) sit in the repo root and must ship with the EXE.
 
+## Threading Model
+- **Blocking I/O:** All network operations (fetching torrents, sending commands like start/stop/remove) MUST be offloaded to a background thread to prevent freezing the GUI.
+- **Implementation:** `MainFrame` uses a `concurrent.futures.ThreadPoolExecutor`.
+- **Pattern:**
+    1. UI event triggers a method (e.g., `on_remove`).
+    2. Method submits a worker function (e.g., `_remove_background`) to `self.thread_pool`.
+    3. Worker function performs blocking calls.
+    4. Worker uses `wx.CallAfter` to invoke a UI-thread method (e.g., `_on_action_complete`) to update the display/statusbar.
+    5. **Never** call `self.client` methods directly from the main GUI thread.
+
 ## Build commands
 - Install deps (only if new environment): `python -m pip install -r requirements.txt` (Store Python, 64‑bit).
-- Build EXE: `python -m PyInstaller --noconfirm SerrebiTorrent.spec`. Output lands in `dist\\SerrebiTorrent.exe`.
+- Build EXE: `pyinstaller SerrebiTorrent.spec`. Output lands in `dist\\SerrebiTorrent.exe`.
+- **Important:** The `.spec` file explicitly includes OpenSSL binaries (`libssl-1_1*.dll`, `libcrypto-1_1*.dll`). Ensure these are present in the root directory before building.
 - Legacy spec filename `rtorrentGUI.spec` still exists for backwards compatibility; it points to the same settings and emits SerrebiTorrent.exe.
-- Adjust `name=` inside the spec if you rebrand again.
-- PyInstaller warnings about `pwd`, `grp`, `OpenSSL.crypto`, `h2`, etc., are expected; they are optional modules referenced by third parties and can be ignored unless you add those features.
 
 ## Packaging
 - Ship the entire `dist` folder: EXE + `config.json` + bundled libraries. No extra installers are provided.
