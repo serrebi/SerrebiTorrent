@@ -4,7 +4,7 @@
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=[('libcrypto-1_1-x64.dll', '.'), ('libssl-1_1-x64.dll', '.')],
     datas=[],
     hiddenimports=[],
     hookspath=[],

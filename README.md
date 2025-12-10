@@ -1,9 +1,9 @@
 # SerrebiTorrent
 
-SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents--whether they live on this PC or on a remote seedbox.
+SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents--whether they live on this PC or on a remote seedbox--without giving up accessibility or keyboard control. Launch it, pick (or create) a profile, and you can start or stop torrents, add new ones from files or magnet/HTTP links, and watch real-time stats for every tracker.
 
 ## What you get
-- Connect to local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, or Transmission from an accessible interface.
+- Connect to local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, or Transmission from a single interface.
 - Live download/upload speeds, progress, ratio, tracker host, and status messages for each torrent.
 - **New:** Expanded sidebar filters including **Seeding**, **Stopped**, and **Error** categories.
 - **Performance:** Background processing for all remote client interactions (updates, deletions, start/stop) ensures the UI remains responsive and lag-free.

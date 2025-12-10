@@ -37,6 +37,9 @@ def prepare_libtorrent_dlls() -> None:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     cwd = os.getcwd()
     python_dlls = os.path.join(sys.base_prefix, "DLLs")
+    
+    # Handle PyInstaller _MEIPASS
+    meipass_dir = getattr(sys, '_MEIPASS', None)
 
     # Try to locate the directory that contains the libtorrent extension itself.
     libtorrent_dir = None
@@ -52,6 +55,7 @@ def prepare_libtorrent_dlls() -> None:
         [
             cwd,
             script_dir,
+            meipass_dir, # Add PyInstaller temp dir
             python_dlls,
             libtorrent_dir,
             os.environ.get("LIBTORRENT_DLL_DIR"),
@@ -72,9 +76,7 @@ def prepare_libtorrent_dlls() -> None:
             try:
                 os.add_dll_directory(path)
             except (FileNotFoundError, OSError):
-                # Ignore directories that cannot be added (should not happen because we verified)
                 pass
 
     os.environ["PATH"] = os.pathsep.join(path_parts)
     _BOOTSTRAPPED = True
-
