@@ -1353,11 +1353,12 @@ class MainFrame(wx.Frame):
 
     def _remove_background(self, hashes, with_data):
         try:
-            for h in hashes:
-                if with_data:
-                    self.client.remove_torrent_with_data(h)
-                else:
-                    self.client.remove_torrent(h)
+            if with_data:
+                # Assuming remove_torrent_with_data can handle a list of hashes
+                self.client.remove_torrent_with_data(hashes)
+            else:
+                # Assuming remove_torrent can handle a list of hashes
+                self.client.remove_torrent(hashes)
             wx.CallAfter(self._on_action_complete, "Removed torrents")
         except Exception as e:
             wx.CallAfter(self._on_action_error, f"Remove failed: {e}")
