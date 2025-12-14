@@ -1,6 +1,8 @@
 import wx
 import sys
 import os
+import subprocess
+from collections import OrderedDict
 
 from libtorrent_env import prepare_libtorrent_dlls
 
@@ -15,6 +17,7 @@ import concurrent.futures
 from clients import RTorrentClient, QBittorrentClient, TransmissionClient, LocalClient
 from config_manager import ConfigManager
 from session_manager import SessionManager
+from torrent_creator import CreateTorrentDialog, create_torrent_bytes
 
 
 # Constants for List Columns
@@ -54,53 +57,6 @@ try:
     import libtorrent as lt
 except ImportError:
     lt = None
-
-def get_app_data_path():
-    if getattr(sys, 'frozen', False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(base, 'SerrebiTorrent_Data')
-    if not os.path.exists(path):
-        os.makedirs(path)
-    return path
-
-from config_manager import ConfigManager
-from session_manager import SessionManager
-
-
-# Constants for List Columns
-COL_NAME = 0
-COL_SIZE = 1
-COL_DONE = 2
-COL_UP = 3
-COL_RATIO = 4
-COL_STATUS = 5
-APP_NAME = "SerrebiTorrent"
-
-
-def get_app_icon():
-    """Return a wx.Icon for the tray and main window, with a safe fallback."""
-    base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    icon_path = os.path.join(base_dir, "icon.ico")
-
-    if os.path.exists(icon_path):
-        try:
-            return wx.Icon(icon_path, wx.BITMAP_TYPE_ICO)
-        except Exception:
-            pass
-
-    bmp = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, (16, 16))
-    if not bmp.IsOk():
-        bmp = wx.Bitmap(16, 16)
-        dc = wx.MemoryDC(bmp)
-        dc.SetBackground(wx.Brush(wx.Colour(0, 0, 0)))
-        dc.Clear()
-        dc.SelectObject(wx.NullBitmap)
-
-    fallback_icon = wx.Icon()
-    fallback_icon.CopyFromBitmap(bmp)
-    return fallback_icon
 
 class AddTorrentDialog(wx.Dialog):
     def __init__(self, parent, name, file_list=None, default_path=""):
@@ -429,11 +385,19 @@ class ProfileDialog(wx.Dialog):
             self.type_input.SetSelection(0)
         sizer.Add(self.type_input, 0, wx.EXPAND | wx.ALL, 5)
         
-        # URL / Path
+        # URL / Path (or local download path)
         self.url_label = wx.StaticText(self, label="URL (e.g. scgi://... or http://...):")
         sizer.Add(self.url_label, 0, wx.ALL, 5)
+
+        url_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.url_input = wx.TextCtrl(self, value=profile['url'] if profile else "")
-        sizer.Add(self.url_input, 0, wx.EXPAND | wx.ALL, 5)
+        url_sizer.Add(self.url_input, 1, wx.EXPAND | wx.RIGHT, 5)
+
+        self.url_browse_btn = wx.Button(self, label="Browse...")
+        self.url_browse_btn.Bind(wx.EVT_BUTTON, self.on_browse_url_path)
+        url_sizer.Add(self.url_browse_btn, 0)
+
+        sizer.Add(url_sizer, 0, wx.EXPAND | wx.ALL, 5)
         
         # User
         self.user_label = wx.StaticText(self, label="Username:")
@@ -464,12 +428,29 @@ class ProfileDialog(wx.Dialog):
         sel = self.type_input.GetStringSelection()
         if sel == "local":
             self.url_label.SetLabel("Download Path:")
+            if hasattr(self, 'url_browse_btn'):
+                self.url_browse_btn.Show(True)
             self.user_input.Disable()
             self.pass_input.Disable()
         else:
             self.url_label.SetLabel("URL (e.g. scgi://... or http://...):")
+            if hasattr(self, 'url_browse_btn'):
+                self.url_browse_btn.Show(False)
             self.user_input.Enable()
             self.pass_input.Enable()
+
+        self.Layout()
+
+
+    def on_browse_url_path(self, event):
+        # Used when profile type is 'local' to choose a download folder.
+        start = self.url_input.GetValue().strip()
+        if not start or not os.path.isdir(start):
+            start = os.path.expanduser("~")
+        dlg = wx.DirDialog(self, "Choose Download Folder", start, style=wx.DD_DEFAULT_STYLE)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.url_input.SetValue(dlg.GetPath())
+        dlg.Destroy()
 
     def GetProfileData(self):
         return {
@@ -514,13 +495,46 @@ class ConnectDialog(wx.Dialog):
         connect_btn.Bind(wx.EVT_BUTTON, self.on_connect)
         btn_sizer.Add(connect_btn, 0, wx.LEFT, 20)
         
+        close_btn = wx.Button(self, wx.ID_CANCEL, label="Close")
+        close_btn.Bind(wx.EVT_BUTTON, lambda evt: self.EndModal(wx.ID_CANCEL))
+        btn_sizer.Add(close_btn, 0, wx.LEFT, 10)
+        
         sizer.Add(btn_sizer, 0, wx.ALIGN_CENTER | wx.ALL, 10)
         
         self.SetSizer(sizer)
         self.Center()
+
+        try:
+            self.SetEscapeId(wx.ID_CANCEL)
+        except Exception:
+            pass
+
+        self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
         
         self.selected_profile_id = None
         self.refresh_list()
+
+    
+    def on_char_hook(self, event):
+        try:
+            key = event.GetKeyCode()
+        except Exception:
+            key = None
+
+        if key == wx.WXK_ESCAPE:
+            try:
+                self.EndModal(wx.ID_CANCEL)
+            except Exception:
+                try:
+                    self.Close()
+                except Exception:
+                    pass
+            return
+
+        try:
+            event.Skip()
+        except Exception:
+            pass
 
     def refresh_list(self):
         self.list_box.Clear()
@@ -668,6 +682,14 @@ class PreferencesDialog(wx.Dialog):
         self.natpmp_chk = wx.CheckBox(conn_panel, label="Enable NAT-PMP Port Mapping")
         self.natpmp_chk.SetValue(self.prefs.get('enable_natpmp', True))
         conn_sizer.Add(self.natpmp_chk, 0, wx.ALL, 5)
+
+        self.dht_chk = wx.CheckBox(conn_panel, label="Enable DHT")
+        self.dht_chk.SetValue(self.prefs.get('enable_dht', True))
+        conn_sizer.Add(self.dht_chk, 0, wx.ALL, 5)
+
+        self.lsd_chk = wx.CheckBox(conn_panel, label="Enable Local Service Discovery (LSD)")
+        self.lsd_chk.SetValue(self.prefs.get('enable_lsd', True))
+        conn_sizer.Add(self.lsd_chk, 0, wx.ALL, 5)
         
         conn_panel.SetSizer(conn_sizer)
         notebook.AddPage(conn_panel, "Connection")
@@ -759,6 +781,8 @@ class PreferencesDialog(wx.Dialog):
             "listen_port": self.port_input.GetValue(),
             "enable_upnp": self.upnp_chk.GetValue(),
             "enable_natpmp": self.natpmp_chk.GetValue(),
+            "enable_dht": self.dht_chk.GetValue() if hasattr(self, "dht_chk") else self.prefs.get("enable_dht", True),
+            "enable_lsd": self.lsd_chk.GetValue() if hasattr(self, "lsd_chk") else self.prefs.get("enable_lsd", True),
             "enable_trackers": self.track_chk.GetValue(),
             "tracker_url": self.track_url_input.GetValue(),
             "proxy_type": self.proxy_type.GetSelection(),
@@ -767,6 +791,345 @@ class PreferencesDialog(wx.Dialog):
             "proxy_user": self.proxy_user.GetValue(),
             "proxy_password": self.proxy_pass.GetValue()
         }
+
+
+class RemotePreferencesDialog(wx.Dialog):
+    CATEGORY_FIELDS = OrderedDict([
+        ("General", [
+            "locale", "create_subfolder_enabled", "start_paused_enabled", "auto_delete_mode",
+            "preallocate_all", "incomplete_files_ext", "auto_tmm_enabled", "torrent_changed_tmm_enabled",
+            "save_path_changed_tmm_enabled", "category_changed_tmm_enabled", "save_path",
+            "temp_path_enabled", "temp_path", "scan_dirs", "export_dir", "export_dir_fin"
+        ]),
+        ("Downloads", [
+            "autorun_enabled", "autorun_program", "queueing_enabled", "max_active_downloads",
+            "max_active_torrents", "max_active_uploads", "dont_count_slow_torrents",
+            "slow_torrent_dl_rate_threshold", "slow_torrent_ul_rate_threshold", "slow_torrent_inactive_timer",
+            "max_ratio_enabled", "max_ratio", "max_ratio_act", "add_trackers_enabled", "add_trackers",
+            "max_seeding_time_enabled", "max_seeding_time", "announce_ip", "announce_to_all_tiers",
+            "announce_to_all_trackers", "recheck_completed_torrents", "resolve_peer_countries",
+            "save_resume_data_interval", "send_buffer_low_watermark", "send_buffer_watermark",
+            "send_buffer_watermark_factor", "socket_backlog_size"
+        ]),
+        ("Connection", [
+            "listen_port", "upnp", "random_port", "max_connec", "max_connec_per_torrent", "max_uploads",
+            "max_uploads_per_torrent", "stop_tracker_timeout", "upnp_lease_duration", "outgoing_ports_min",
+            "outgoing_ports_max", "current_interface_address", "current_network_interface"
+        ]),
+        ("Speed", [
+            "dl_limit", "up_limit", "alt_dl_limit", "alt_up_limit"
+        ]),
+        ("BitTorrent", [
+            "dht", "pex", "lsd", "encryption", "anonymous_mode", "proxy_type", "proxy_ip",
+            "proxy_port", "proxy_peer_connections", "proxy_auth_enabled", "proxy_username",
+            "proxy_password", "proxy_torrents_only", "bittorrent_protocol", "enable_piece_extent_affinity",
+            "limit_utp_rate", "limit_tcp_overhead", "limit_lan_peers", "async_io_threads", "banned_IPs",
+            "checking_memory_use", "disk_cache", "disk_cache_ttl", "embedded_tracker_port",
+            "enable_coalesce_read_write", "enable_embedded_tracker", "enable_multi_connections_from_same_ip",
+            "enable_os_cache", "enable_upload_suggestions", "file_pool_size", "upload_choking_algorithm",
+            "upload_slots_behavior", "utp_tcp_mixed_mode"
+        ]),
+        ("Scheduler", [
+            "scheduler_enabled", "schedule_from_hour", "schedule_from_min", "schedule_to_hour",
+            "schedule_to_min", "scheduler_days"
+        ]),
+        ("Web UI", [
+            "web_ui_domain_list", "web_ui_address", "web_ui_port", "web_ui_upnp", "web_ui_username",
+            "web_ui_password", "web_ui_csrf_protection_enabled", "web_ui_clickjacking_protection_enabled",
+            "web_ui_secure_cookie_enabled", "web_ui_max_auth_fail_count", "web_ui_ban_duration",
+            "web_ui_session_timeout", "web_ui_host_header_validation_enabled", "bypass_local_auth",
+            "bypass_auth_subnet_whitelist_enabled", "bypass_auth_subnet_whitelist",
+            "alternative_webui_enabled", "alternative_webui_path", "use_https", "ssl_key", "ssl_cert",
+            "web_ui_https_key_path", "web_ui_https_cert_path", "dyndns_enabled", "dyndns_service",
+            "dyndns_username", "dyndns_password", "dyndns_domain", "web_ui_use_custom_http_headers_enabled",
+            "web_ui_custom_http_headers"
+        ]),
+        ("Notifications", [
+            "mail_notification_enabled", "mail_notification_sender", "mail_notification_email",
+            "mail_notification_smtp", "mail_notification_ssl_enabled", "mail_notification_auth_enabled",
+            "mail_notification_username", "mail_notification_password", "rss_refresh_interval",
+            "rss_max_articles_per_feed", "rss_processing_enabled", "rss_auto_downloading_enabled",
+            "rss_download_repack_proper_episodes", "rss_smart_episode_filters"
+        ])
+    ])
+
+    BOOL_KEYS = {
+        "create_subfolder_enabled", "start_paused_enabled", "preallocate_all", "incomplete_files_ext",
+        "auto_tmm_enabled", "torrent_changed_tmm_enabled", "save_path_changed_tmm_enabled",
+        "category_changed_tmm_enabled", "temp_path_enabled", "mail_notification_enabled",
+        "mail_notification_ssl_enabled", "mail_notification_auth_enabled", "autorun_enabled",
+        "queueing_enabled", "dont_count_slow_torrents", "max_ratio_enabled", "upnp", "random_port",
+        "limit_utp_rate", "limit_tcp_overhead", "limit_lan_peers", "scheduler_enabled", "dht", "pex",
+        "lsd", "anonymous_mode", "proxy_peer_connections", "proxy_auth_enabled", "proxy_torrents_only",
+        "ip_filter_enabled", "ip_filter_trackers", "web_ui_upnp", "web_ui_csrf_protection_enabled",
+        "web_ui_clickjacking_protection_enabled", "web_ui_secure_cookie_enabled",
+        "web_ui_host_header_validation_enabled", "bypass_local_auth",
+        "bypass_auth_subnet_whitelist_enabled", "alternative_webui_enabled", "use_https",
+        "dyndns_enabled", "rss_processing_enabled", "rss_auto_downloading_enabled",
+        "rss_download_repack_proper_episodes", "add_trackers_enabled",
+        "web_ui_use_custom_http_headers_enabled", "max_seeding_time_enabled",
+        "announce_to_all_tiers", "announce_to_all_trackers", "enable_piece_extent_affinity",
+        "enable_coalesce_read_write", "enable_embedded_tracker",
+        "enable_multi_connections_from_same_ip", "enable_os_cache", "enable_upload_suggestions",
+        "recheck_completed_torrents", "resolve_peer_countries"
+    }
+
+    MULTILINE_FIELDS = {
+        "add_trackers", "banned_IPs", "bypass_auth_subnet_whitelist",
+        "web_ui_custom_http_headers", "rss_smart_episode_filters", "ssl_key", "ssl_cert"
+    }
+
+    JSON_FIELDS = {"scan_dirs"}
+    PASSWORD_FIELDS = {"proxy_password", "mail_notification_password", "web_ui_password", "dyndns_password"}
+
+    ENUM_CHOICES = {
+        "scheduler_days": [
+            ("Every day", 0), ("Every weekday", 1), ("Every weekend", 2), ("Every Monday", 3),
+            ("Every Tuesday", 4), ("Every Wednesday", 5), ("Every Thursday", 6),
+            ("Every Friday", 7), ("Every Saturday", 8), ("Every Sunday", 9)
+        ],
+        "encryption": [
+            ("Prefer encryption", 0), ("Force encryption on", 1), ("Force encryption off", 2)
+        ],
+        "proxy_type": [
+            ("Proxy disabled", -1), ("HTTP (no auth)", 1), ("SOCKS5 (no auth)", 2),
+            ("HTTP (with auth)", 3), ("SOCKS5 (with auth)", 4), ("SOCKS4 (no auth)", 5)
+        ],
+        "dyndns_service": [
+            ("Use DyDNS", 0), ("Use NOIP", 1)
+        ],
+        "max_ratio_act": [
+            ("Pause torrent", 0), ("Remove torrent", 1)
+        ],
+        "bittorrent_protocol": [
+            ("TCP and uTP", 0), ("TCP", 1), ("uTP", 2)
+        ],
+        "upload_choking_algorithm": [
+            ("Round-robin", 0), ("Fastest upload", 1), ("Anti-leech", 2)
+        ],
+        "upload_slots_behavior": [
+            ("Fixed slots", 0), ("Upload-rate based", 1)
+        ],
+        "utp_tcp_mixed_mode": [
+            ("Prefer TCP", 0), ("Peer proportional", 1)
+        ]
+    }
+
+    def __init__(self, parent, prefs):
+        super().__init__(parent, title="qBittorrent Remote Preferences", size=(900, 640))
+        self.prefs = OrderedDict(prefs or {})
+        self.field_controls = {}
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        intro = wx.StaticText(
+            self,
+            label="Edit the remote qBittorrent application preferences. Boolean options appear as checkboxes."
+        )
+        sizer.Add(intro, 0, wx.ALL, 10)
+
+        notebook = wx.Notebook(self)
+        assigned = set()
+
+        for category, keys in self.CATEGORY_FIELDS.items():
+            selected_keys = [key for key in keys if key in self.prefs]
+            if not selected_keys:
+                continue
+            panel = self._build_category_panel(notebook, category, selected_keys)
+            notebook.AddPage(panel, category)
+            assigned.update(selected_keys)
+
+        remaining = [k for k in self.prefs if k not in assigned]
+        if remaining:
+            panel = self._build_category_panel(notebook, "Advanced", remaining)
+            notebook.AddPage(panel, "Advanced")
+
+        if notebook.GetPageCount() == 0:
+            placeholder = wx.Panel(notebook)
+            placeholder_sizer = wx.BoxSizer(wx.VERTICAL)
+            placeholder_sizer.Add(
+                wx.StaticText(placeholder, label="Remote client did not return any preferences."),
+                1,
+                wx.ALL | wx.EXPAND,
+                10
+            )
+            placeholder.SetSizer(placeholder_sizer)
+            notebook.AddPage(placeholder, "Preferences")
+
+        sizer.Add(notebook, 1, wx.EXPAND | wx.ALL, 5)
+
+        btns = wx.StdDialogButtonSizer()
+        btns.AddButton(wx.Button(self, wx.ID_OK))
+        btns.AddButton(wx.Button(self, wx.ID_CANCEL))
+        btns.Realize()
+        sizer.Add(btns, 0, wx.ALIGN_CENTER | wx.ALL, 10)
+
+        self.SetSizer(sizer)
+        self.Layout()
+        self.Center()
+
+    def _build_category_panel(self, parent, category, keys):
+        panel = wx.ScrolledWindow(parent, style=wx.VSCROLL)
+        panel.SetScrollRate(0, 10)
+        panel.SetMinSize((840, 360))
+        layout = wx.BoxSizer(wx.VERTICAL)
+
+        for key in keys:
+            field = self._create_field(panel, key)
+            layout.Add(field, 0, wx.EXPAND | wx.ALL, 4)
+
+        panel.SetSizer(layout)
+        panel.Layout()
+        panel.FitInside()
+        return panel
+
+    def _create_field(self, panel, key):
+        value = self.prefs.get(key)
+        field_type = self._determine_field_type(key, value)
+        field_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        if field_type == "bool":
+            label = self._format_label(key)
+            control = wx.CheckBox(panel, label=label)
+            control.SetValue(bool(value))
+            field_sizer.Add(control, 1, wx.ALIGN_CENTER_VERTICAL)
+        else:
+            label_ctrl = wx.StaticText(panel, label=f"{self._format_label(key)}:")
+            field_sizer.Add(label_ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+            control = self._create_non_bool_control(panel, key, value, field_type)
+            field_sizer.Add(control, 1, wx.EXPAND)
+
+        self.field_controls[key] = {
+            "control": control,
+            "type": field_type,
+            "choices": self.ENUM_CHOICES.get(key)
+        }
+        return field_sizer
+
+    def _create_non_bool_control(self, panel, key, value, field_type):
+        if field_type == "choice":
+            choices = [label for label, _ in self.ENUM_CHOICES.get(key, [])]
+            control = wx.Choice(panel, choices=choices)
+            selection = 0
+            for idx, (_, val) in enumerate(self.ENUM_CHOICES.get(key, [])):
+                if val == value:
+                    selection = idx
+                    break
+            control.SetSelection(selection)
+            return control
+
+        style = 0
+        if key in self.MULTILINE_FIELDS or field_type == "json":
+            style |= wx.TE_MULTILINE
+        if key in self.PASSWORD_FIELDS:
+            style |= wx.TE_PASSWORD
+
+        control = wx.TextCtrl(panel, style=style | wx.TE_RICH2 if field_type == "json" else style)
+
+        if field_type == "json":
+            payload = json.dumps(value, indent=2) if value else ""
+            control.SetValue(payload)
+            control.SetMinSize((420, 100))
+            control.SetToolTip("Enter a JSON object (e.g. {\"/watched\": \"/home/user\"}).")
+            return control
+
+        text_value = ""
+        if value is not None:
+            text_value = str(value)
+        control.SetValue(text_value)
+        control.SetMinSize((420, 24 if not (style & wx.TE_MULTILINE) else 100))
+        if key in self.PASSWORD_FIELDS:
+            control.SetHint("Leave blank to retain the current password.")
+        return control
+
+    def _determine_field_type(self, key, value):
+        if key in self.BOOL_KEYS:
+            return "bool"
+        if isinstance(value, bool):
+            return "bool"
+        if key in self.ENUM_CHOICES:
+            return "choice"
+        if key in self.JSON_FIELDS or isinstance(value, (dict, list)):
+            return "json"
+        if isinstance(value, float):
+            return "float"
+        if isinstance(value, int):
+            return "int"
+        return "string"
+
+    def _format_label(self, key):
+        label = key.replace("_", " ").title()
+        replacements = {
+            "Web Ui": "Web UI",
+            "Ssl": "SSL",
+            "Http": "HTTP",
+            "Dns": "DNS",
+            "Ip": "IP",
+            "Ut P": "uTP",
+            "Tcp": "TCP",
+            "Lng": "LNG"
+        }
+        for old, new in replacements.items():
+            label = label.replace(old, new)
+        return label
+
+    def GetPreferences(self):
+        prefs = {}
+        for key, meta in self.field_controls.items():
+            control = meta["control"]
+            field_type = meta["type"]
+
+            if field_type == "bool":
+                prefs[key] = bool(control.GetValue())
+                continue
+
+            if field_type == "choice":
+                selection = control.GetSelection()
+                choices = meta.get("choices") or []
+                if choices and selection >= 0:
+                    prefs[key] = choices[selection][1]
+                continue
+
+            text = control.GetValue()
+
+            if field_type == "json":
+                stripped = text.strip()
+                if not stripped:
+                    prefs[key] = {}
+                    continue
+                try:
+                    prefs[key] = json.loads(text)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid JSON for {self._format_label(key)}: {exc}")
+                continue
+
+            if field_type == "int":
+                stripped = text.strip()
+                if stripped == "":
+                    prefs[key] = self.prefs.get(key, 0)
+                    continue
+                try:
+                    prefs[key] = int(stripped)
+                except ValueError as exc:
+                    raise ValueError(f"Invalid integer for {self._format_label(key)}: {exc}")
+                continue
+
+            if field_type == "float":
+                stripped = text.strip()
+                if stripped == "":
+                    prefs[key] = self.prefs.get(key, 0.0)
+                    continue
+                try:
+                    prefs[key] = float(stripped)
+                except ValueError as exc:
+                    raise ValueError(f"Invalid number for {self._format_label(key)}: {exc}")
+                continue
+
+            if key in self.PASSWORD_FIELDS and not text:
+                continue
+
+            prefs[key] = text
+
+        return prefs
 
 class TaskBarIcon(wx.adv.TaskBarIcon):
     def __init__(self, frame):
@@ -789,7 +1152,13 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         pause_item = menu.Append(wx.ID_ANY, "Pause")
         resume_item = menu.Append(wx.ID_ANY, "Resume")
         self.Bind(wx.EVT_MENU, self.on_start, start_item)
-        self.Bind(wx.EVT_MENU, self.on_stop, stop_item)
+        self.Bind(wx.EVT_MENU, self.on_pause, pause_item)
+        self.Bind(wx.EVT_MENU, self.on_resume, resume_item)
+        self.Bind(wx.EVT_MENU, self.on_recheck, recheck_item)
+        self.Bind(wx.EVT_MENU, self.on_reannounce, reannounce_item)
+        self.Bind(wx.EVT_MENU, self.on_copy_info_hash, copy_hash_item)
+        self.Bind(wx.EVT_MENU, self.on_copy_magnet, copy_magnet_item)
+        self.Bind(wx.EVT_MENU, self.on_open_download_folder, open_folder_item)
         self.Bind(wx.EVT_MENU, self.on_pause, pause_item)
         self.Bind(wx.EVT_MENU, self.on_resume, resume_item)
 
@@ -849,8 +1218,16 @@ class MainFrame(wx.Frame):
 
         self.client = None
         self.connected = False
-        self.all_torrents = [] 
+        self.all_torrents = []
         self.current_filter = "All"
+        self.current_profile_id = None
+        self.client_generation = 0
+        self.client_default_save_path = None
+        self.known_hashes = set()
+        self.pending_add_baseline = None
+        self.pending_auto_start = False
+        self.pending_auto_start_attempts = 0
+        self.pending_hash_starts = set()
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.refreshing = False
         self.timer = wx.Timer(self)
@@ -863,43 +1240,7 @@ class MainFrame(wx.Frame):
         self.SetIcon(get_app_icon())
         
         # Menu Bar
-        menubar = wx.MenuBar()
-        file_menu = wx.Menu()
-        connect_item = file_menu.Append(wx.ID_ANY, "&Connect...\tCtrl+Shift+C", "Manage Profiles & Connect")
-        add_file_item = file_menu.Append(wx.ID_ANY, "Add Torrent &File...\tCtrl+O", "Add a torrent from a local file")
-        add_url_item = file_menu.Append(wx.ID_ANY, "Add &URL/Magnet...\tCtrl+U", "Add a torrent from a URL or Magnet link")
-        file_menu.AppendSeparator()
-        prefs_item = file_menu.Append(wx.ID_PREFERENCES, "&Preferences...\tCtrl+P", "Configure application settings")
-        file_menu.AppendSeparator()
-        exit_item = file_menu.Append(wx.ID_EXIT, "E&xit", "Exit application")
-        menubar.Append(file_menu, "&File")
-        
-        torrent_menu = wx.Menu()
-        start_item = torrent_menu.Append(wx.ID_ANY, "&Start\tCtrl+S", "Start selected torrents")
-        stop_item = torrent_menu.Append(wx.ID_ANY, "Sto&p\tCtrl+P", "Stop selected torrents")
-        remove_item = torrent_menu.Append(wx.ID_ANY, "&Remove\tDel", "Remove selected torrents")
-        remove_data_item = torrent_menu.Append(wx.ID_ANY, "Remove with &Data\tShift+Del", "Remove selected torrents and data")
-        select_all_item = torrent_menu.Append(wx.ID_SELECTALL, "Select &All\tCtrl+A", "Select all torrents")
-        menubar.Append(torrent_menu, "&Torrent")
-        
-        tools_menu = wx.Menu()
-        assoc_item = tools_menu.Append(wx.ID_ANY, "Register &Associations", "Associate .torrent and magnet links with this app")
-        menubar.Append(tools_menu, "T&ools")
-
-        self.SetMenuBar(menubar)
-        
-        # Event Bindings
-        self.Bind(wx.EVT_MENU, self.on_connect, connect_item)
-        self.Bind(wx.EVT_MENU, self.on_add_file, add_file_item)
-        self.Bind(wx.EVT_MENU, self.on_add_url, add_url_item)
-        self.Bind(wx.EVT_MENU, self.on_prefs, prefs_item)
-        self.Bind(wx.EVT_MENU, lambda e: self.Close(), exit_item)
-        self.Bind(wx.EVT_MENU, self.on_start, start_item)
-        self.Bind(wx.EVT_MENU, self.on_stop, stop_item)
-        self.Bind(wx.EVT_MENU, self.on_remove, remove_item)
-        self.Bind(wx.EVT_MENU, self.on_remove_data, remove_data_item)
-        self.Bind(wx.EVT_MENU, self.on_select_all, select_all_item)
-        self.Bind(wx.EVT_MENU, lambda e: register_associations(), assoc_item)
+        self._build_menu_bar()
 
         # Splitter Window
         self.splitter = wx.SplitterWindow(self)
@@ -933,19 +1274,12 @@ class MainFrame(wx.Frame):
         self.statusbar = self.CreateStatusBar(2)
         self.statusbar.SetStatusText("Disconnected", 0)
 
-        accel_entries = [
-            (wx.ACCEL_CTRL, ord('A'), select_all_item.GetId()),
-            (wx.ACCEL_CTRL, ord('S'), start_item.GetId()),
-            (wx.ACCEL_CTRL, ord('P'), stop_item.GetId()),
-            (wx.ACCEL_NORMAL, wx.WXK_DELETE, remove_item.GetId()),
-            (wx.ACCEL_SHIFT, wx.WXK_DELETE, remove_data_item.GetId()),
-            (wx.ACCEL_CTRL, ord('O'), add_file_item.GetId()),
-            (wx.ACCEL_CTRL, ord('U'), add_url_item.GetId()),
-        ]
-        self.SetAcceleratorTable(wx.AcceleratorTable(accel_entries))
         
         self.Center()
         
+        # Initialize preferred path
+        self._update_client_default_save_path()
+
         # Attempt auto-connect
         wx.CallAfter(self.try_auto_connect)
 
@@ -955,6 +1289,225 @@ class MainFrame(wx.Frame):
         if self.IsIconized():
             self.Restore()
         self.Raise()
+
+    def _build_menu_bar(self):
+        """Build or rebuild the menu bar.
+
+        The Connect entry is a submenu when profiles exist, enabling quick switching.
+        """
+        menubar = wx.MenuBar()
+
+        # ----- File menu -----
+        file_menu = wx.Menu()
+
+        profiles = self.config_manager.get_profiles()
+        self._connect_menu_id_to_profile = {}
+
+        if profiles:
+            connect_menu = wx.Menu()
+            default_id = self.config_manager.get_default_profile_id()
+
+            # Sort profiles by name for predictable navigation.
+            def _sort_key(kv):
+                pid, p = kv
+                return str(p.get("name", pid)).lower()
+
+            for pid, p in sorted(profiles.items(), key=_sort_key):
+                label = str(p.get("name") or pid)
+                if default_id and pid == default_id:
+                    label += " (Default)"
+                item = connect_menu.Append(wx.ID_ANY, label, "Connect to this profile")
+                self._connect_menu_id_to_profile[item.GetId()] = pid
+                self.Bind(wx.EVT_MENU, self.on_connect_profile_menu, item)
+
+            # Put the Connection Manager entry at the bottom of the submenu,
+            # after all existing profile choices.
+            connect_menu.AppendSeparator()
+            manage_item = connect_menu.Append(
+                wx.ID_ANY,
+                "Connection Manager...\tCtrl+Shift+C",
+                "Add/edit/delete profiles and connect"
+            )
+            self.Bind(wx.EVT_MENU, self.on_connect, manage_item)
+
+            file_menu.AppendSubMenu(connect_menu, "&Connect", "Connect or switch profile")
+        else:
+            connect_item = file_menu.Append(
+                wx.ID_ANY,
+                "&Connect...\tCtrl+Shift+C",
+                "Manage Profiles & Connect"
+            )
+            self.Bind(wx.EVT_MENU, self.on_connect, connect_item)
+
+        add_file_item = file_menu.Append(
+            wx.ID_ANY,
+            "Add Torrent &File...\tCtrl+O",
+            "Add a torrent from a local file"
+        )
+        add_url_item = file_menu.Append(
+            wx.ID_ANY,
+            "Add &URL/Magnet...\tCtrl+U",
+            "Add a torrent from a URL or Magnet link"
+        )
+        create_torrent_item = file_menu.Append(
+            wx.ID_ANY,
+            "Create &Torrent...\tCtrl+N",
+            "Create a .torrent file from a file or folder"
+        )
+        file_menu.AppendSeparator()
+        exit_item = file_menu.Append(wx.ID_EXIT, "E&xit", "Exit application")
+        menubar.Append(file_menu, "&File")
+
+        # ----- Actions menu -----
+        actions_menu = wx.Menu()
+        start_item = actions_menu.Append(wx.ID_ANY, "&Start\tCtrl+S", "Start selected torrents")
+        pause_item = actions_menu.Append(wx.ID_ANY, "&Pause\tCtrl+P", "Pause selected torrents")
+        resume_item = actions_menu.Append(wx.ID_ANY, "&Resume\tCtrl+R", "Resume selected torrents")
+        actions_menu.AppendSeparator()
+        recheck_item = actions_menu.Append(wx.ID_ANY, "Force &Recheck", "Force a recheck/verification (if supported)")
+        reannounce_item = actions_menu.Append(wx.ID_ANY, "Force &Reannounce", "Force an immediate tracker announce (if supported)")
+        actions_menu.AppendSeparator()
+        copy_hash_item = actions_menu.Append(wx.ID_ANY, "Copy &Info Hash\tCtrl+I", "Copy the info hash for selected torrents")
+        copy_magnet_item = actions_menu.Append(wx.ID_ANY, "Copy &Magnet Link\tCtrl+M", "Copy a magnet link for selected torrents")
+        open_folder_item = actions_menu.Append(wx.ID_ANY, "Open Download &Folder", "Open the download folder (if available)")
+        actions_menu.AppendSeparator()
+        remove_item = actions_menu.Append(wx.ID_ANY, "&Remove\tDel", "Remove selected torrents")
+        remove_data_item = actions_menu.Append(wx.ID_ANY, "Remove with &Data\tShift+Del", "Remove selected torrents and data")
+        select_all_item = actions_menu.Append(wx.ID_SELECTALL, "Select &All\tCtrl+A", "Select all torrents")
+        menubar.Append(actions_menu, "&Actions")
+
+        # ----- Tools menu -----
+        tools_menu = wx.Menu()
+        prefs_item = tools_menu.Append(wx.ID_PREFERENCES, "&Preferences...\tCtrl+,", "Configure application settings")
+        assoc_item = tools_menu.Append(wx.ID_ANY, "Register &Associations", "Associate .torrent and magnet links with this app")
+        tools_menu.AppendSeparator()
+        self.remote_prefs_item = tools_menu.Append(wx.ID_ANY, "qBittorrent Remote Preferences", "Edit connected qBittorrent settings")
+        self.remote_prefs_item.Enable(False)
+        menubar.Append(tools_menu, "T&ools")
+
+        self.SetMenuBar(menubar)
+
+        # Bind actions for the non-connect file menu items.
+        self.Bind(wx.EVT_MENU, self.on_add_file, add_file_item)
+        self.Bind(wx.EVT_MENU, self.on_add_url, add_url_item)
+        self.Bind(wx.EVT_MENU, self.on_create_torrent, create_torrent_item)
+        self.Bind(wx.EVT_MENU, self.on_prefs, prefs_item)
+        self.Bind(wx.EVT_MENU, lambda e: self.Close(), exit_item)
+
+        # Bind actions menu.
+        self.Bind(wx.EVT_MENU, self.on_start, start_item)
+        self.Bind(wx.EVT_MENU, self.on_pause, pause_item)
+        self.Bind(wx.EVT_MENU, self.on_resume, resume_item)
+        self.Bind(wx.EVT_MENU, self.on_recheck, recheck_item)
+        self.Bind(wx.EVT_MENU, self.on_reannounce, reannounce_item)
+        self.Bind(wx.EVT_MENU, self.on_copy_info_hash, copy_hash_item)
+        self.Bind(wx.EVT_MENU, self.on_copy_magnet, copy_magnet_item)
+        self.Bind(wx.EVT_MENU, self.on_open_download_folder, open_folder_item)
+        self.Bind(wx.EVT_MENU, self.on_remove, remove_item)
+        self.Bind(wx.EVT_MENU, self.on_remove_data, remove_data_item)
+        self.Bind(wx.EVT_MENU, self.on_select_all, select_all_item)
+
+        # Tools menu extras.
+        self.Bind(wx.EVT_MENU, lambda e: register_associations(), assoc_item)
+        self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.remote_prefs_item)
+
+        # Keep the remote-preferences menu in sync with connection state.
+        self._update_remote_prefs_menu_state()
+        # Accelerator table: ensure shortcuts work regardless of focus.
+        accel_entries = [
+            (wx.ACCEL_CTRL, ord('A'), select_all_item.GetId()),
+            (wx.ACCEL_CTRL, ord('S'), start_item.GetId()),
+            (wx.ACCEL_CTRL, ord('P'), pause_item.GetId()),
+            (wx.ACCEL_CTRL, ord('R'), resume_item.GetId()),
+            (wx.ACCEL_NORMAL, wx.WXK_DELETE, remove_item.GetId()),
+            (wx.ACCEL_SHIFT, wx.WXK_DELETE, remove_data_item.GetId()),
+            (wx.ACCEL_CTRL, ord('O'), add_file_item.GetId()),
+            (wx.ACCEL_CTRL, ord('U'), add_url_item.GetId()),
+            (wx.ACCEL_CTRL, ord('N'), create_torrent_item.GetId()),
+            (wx.ACCEL_CTRL, ord('I'), copy_hash_item.GetId()),
+            (wx.ACCEL_CTRL, ord('M'), copy_magnet_item.GetId()),
+            (wx.ACCEL_CTRL, ord(','), prefs_item.GetId()),
+        ]
+        self.SetAcceleratorTable(wx.AcceleratorTable(accel_entries))
+
+
+    def on_connect_profile_menu(self, event):
+        pid = getattr(self, "_connect_menu_id_to_profile", {}).get(event.GetId())
+        if not pid:
+            return
+        self.connect_profile(pid)
+
+
+    def _update_client_default_save_path(self):
+        prefs = self.config_manager.get_preferences()
+        fallback = prefs.get('download_path', '')
+        path = fallback
+        if self.client:
+            try:
+                candidate = self.client.get_default_save_path()
+                if candidate is not None:
+                    path = candidate
+            except Exception as e:
+                pass
+        self.client_default_save_path = path
+
+    def _update_remote_prefs_menu_state(self):
+        enabled = isinstance(self.client, QBittorrentClient) and self.connected
+        if hasattr(self, "remote_prefs_item"):
+            self.remote_prefs_item.Enable(enabled)
+
+    def _prepare_auto_start(self):
+        if not self.client:
+            return
+
+        self.pending_add_baseline = set(self.known_hashes)
+        self.pending_auto_start = True
+        self.pending_auto_start_attempts = 0
+        self.pending_hash_starts = set()
+
+    def _maybe_hash_from_torrent_bytes(self, data):
+        if lt:
+            try:
+                info = lt.torrent_info(data)
+                return str(info.info_hash())
+            except Exception:
+                return None
+        return None
+
+    def _maybe_hash_from_magnet(self, url):
+        try:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            xts = qs.get('xt', [])
+            for xt in xts:
+                if xt.startswith("urn:btih:"):
+                    return xt.split(":")[-1].lower()
+        except Exception:
+            pass
+
+        if lt:
+            try:
+                params = lt.parse_magnet_uri(url)
+                if params.info_hashes.has_v1():
+                    return str(params.info_hashes.v1)
+            except Exception:
+                pass
+        return None
+
+    def _auto_start_hashes(self, generation, hashes):
+        try:
+            import time
+            time.sleep(0.3)
+            for h in hashes:
+                if generation != self.client_generation:
+                    return
+                if self.client:
+                    self.client.start_torrent(h)
+            wx.CallAfter(self.statusbar.SetStatusText, "Auto-started new torrent(s)", 0)
+            wx.CallAfter(self.refresh_data)
+        except Exception as e:
+            wx.CallAfter(self.statusbar.SetStatusText, f"Auto-start failed: {e}", 0)
 
     def on_prefs(self, event):
         dlg = PreferencesDialog(self, self.config_manager)
@@ -966,7 +1519,45 @@ class MainFrame(wx.Frame):
                 SessionManager.get_instance().apply_preferences(prefs)
             except Exception as e:
                 wx.LogError(f"Failed to apply settings: {e}")
+            self._update_client_default_save_path()
         dlg.Destroy()
+
+    def on_remote_preferences(self, event):
+        if not self.connected or not isinstance(self.client, QBittorrentClient):
+            wx.MessageBox("Remote preferences are only available when connected to qBittorrent.", "Information", wx.OK | wx.ICON_INFORMATION)
+            return
+
+        self.statusbar.SetStatusText("Fetching qBittorrent preferences...", 0)
+        self.thread_pool.submit(self._fetch_remote_preferences)
+
+    def _fetch_remote_preferences(self):
+        try:
+            prefs = self.client.get_app_preferences()
+            wx.CallAfter(self._show_remote_preferences_dialog, prefs)
+        except Exception as e:
+            wx.CallAfter(wx.LogError, f"Failed to fetch remote preferences: {e}")
+
+    def _show_remote_preferences_dialog(self, prefs):
+        if not prefs:
+            wx.MessageBox("Failed to retrieve preferences from qBittorrent.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        dlg = RemotePreferencesDialog(self, prefs)
+        if dlg.ShowModal() == wx.ID_OK:
+            try:
+                parsed = dlg.GetPreferences()
+                self.thread_pool.submit(self._apply_remote_preferences, parsed)
+            except ValueError as e:
+                wx.MessageBox(f"{e}", "Error", wx.OK | wx.ICON_ERROR)
+        dlg.Destroy()
+
+    def _apply_remote_preferences(self, prefs):
+        try:
+            self.client.set_app_preferences(prefs)
+            wx.CallAfter(self.statusbar.SetStatusText, "qBittorrent preferences saved", 0)
+            wx.CallAfter(self._update_client_default_save_path)
+        except Exception as e:
+            wx.CallAfter(wx.LogError, f"Failed to update remote preferences: {e}")
 
     def on_minimize(self, event):
         prefs = self.config_manager.get_preferences()
@@ -1000,6 +1591,10 @@ class MainFrame(wx.Frame):
         p = self.config_manager.get_profile(pid)
         if not p: return
         
+        self.current_profile_id = pid
+        self.client_default_save_path = None
+        self.client_generation += 1
+
         # Reset state before connecting
         self.timer.Stop()
         self.connected = False
@@ -1007,6 +1602,12 @@ class MainFrame(wx.Frame):
         self.all_torrents = []
         self.torrent_list.update_data([])
         self.statusbar.SetStatusText("Connecting...", 0)
+        self.known_hashes.clear()
+        self.pending_add_baseline = None
+        self.pending_auto_start = False
+        self.pending_auto_start_attempts = 0
+        self.pending_hash_starts = set()
+        self._update_remote_prefs_menu_state()
         
         try:
             if p['type'] == 'local':
@@ -1019,6 +1620,7 @@ class MainFrame(wx.Frame):
                 self.client = TransmissionClient(p['url'], p['user'], p['password'])
                 
             self.connected = True
+            self._update_client_default_save_path()
             
             status_msg = f"Connected to {p['name']}"
             if p['type'] != 'local':
@@ -1027,10 +1629,12 @@ class MainFrame(wx.Frame):
             self.statusbar.SetStatusText(status_msg, 0)
             self.refresh_data()
             self.timer.Start(2000) # Refresh every 2 seconds
+            self._update_remote_prefs_menu_state()
         except Exception as e:
             wx.LogError(f"Connection failed: {e}")
             self.connected = False
             self.statusbar.SetStatusText("Connection Failed", 0)
+            self._update_remote_prefs_menu_state()
 
     def on_connect(self, event):
         dlg = ConnectDialog(self, self.config_manager)
@@ -1038,6 +1642,8 @@ class MainFrame(wx.Frame):
             pid = dlg.selected_profile_id
             self.connect_profile(pid)
         dlg.Destroy()
+        # Profiles may have been added/edited; rebuild the menu bar to reflect changes.
+        self._build_menu_bar()
 
     def on_timer(self, event):
         if self.connected:
@@ -1048,9 +1654,10 @@ class MainFrame(wx.Frame):
         
         self.refreshing = True
         filter_mode = self.current_filter
-        self.thread_pool.submit(self._fetch_and_process_data, filter_mode)
+        generation = self.client_generation
+        self.thread_pool.submit(self._fetch_and_process_data, filter_mode, generation)
 
-    def _fetch_and_process_data(self, filter_mode):
+    def _fetch_and_process_data(self, filter_mode, generation):
         try:
             torrents = self.client.get_torrents_full()
             
@@ -1126,17 +1733,20 @@ class MainFrame(wx.Frame):
                 g_down, g_up = self.client.get_global_stats()
             except: pass
             
-            wx.CallAfter(self._on_refresh_complete, torrents, display_data, stats, tracker_counts, g_down, g_up)
+            wx.CallAfter(self._on_refresh_complete, generation, torrents, display_data, stats, tracker_counts, g_down, g_up)
             
         except Exception as e:
-            wx.CallAfter(self._on_refresh_error, e)
+            wx.CallAfter(self._on_refresh_error, generation, e)
 
-    def _on_refresh_complete(self, torrents, display_data, stats, tracker_counts, g_down, g_up):
+    def _on_refresh_complete(self, generation, torrents, display_data, stats, tracker_counts, g_down, g_up):
         self.refreshing = False
-        if not self.connected: return
+        if not self.connected or generation != self.client_generation:
+            return
 
         self.all_torrents = torrents
         self.torrent_list.update_data(display_data)
+        current_hashes = {t.get('hash') for t in torrents if t.get('hash')}
+        self.known_hashes = current_hashes
         
         for key, item_id in self.cat_ids.items():
             self.sidebar.SetItemText(item_id, f"{key} ({stats[key]})")
@@ -1168,8 +1778,31 @@ class MainFrame(wx.Frame):
 
         self.statusbar.SetStatusText(f"DL: {self.fmt_size(g_down)}/s | UL: {self.fmt_size(g_up)}/s", 1)
 
-    def _on_refresh_error(self, e):
+        if self.pending_auto_start:
+            target_hashes = set(current_hashes)
+            if self.pending_hash_starts:
+                target_hashes |= self.pending_hash_starts
+            if self.pending_add_baseline is not None:
+                target_hashes = target_hashes - self.pending_add_baseline
+
+            if target_hashes:
+                self.pending_auto_start = False
+                self.pending_add_baseline = None
+                self.pending_auto_start_attempts = 0
+                self.pending_hash_starts.clear()
+                self.thread_pool.submit(self._auto_start_hashes, generation, target_hashes)
+            else:
+                self.pending_auto_start_attempts += 1
+                if self.pending_auto_start_attempts >= 5:
+                    self.pending_auto_start = False
+                    self.pending_add_baseline = None
+                    self.pending_auto_start_attempts = 0
+                    self.pending_hash_starts.clear()
+
+    def _on_refresh_error(self, generation, e):
         self.refreshing = False
+        if generation != self.client_generation:
+            return
         print(f"Refresh error: {e}")
 
     def fmt_size(self, size):
@@ -1201,6 +1834,11 @@ class MainFrame(wx.Frame):
             print(f"Failed to fetch trackers: {e}")
         return []
 
+    def _get_default_save_path(self):
+        if self.client_default_save_path is not None:
+            return self.client_default_save_path
+        return self.config_manager.get_preferences().get('download_path', '')
+
     def on_add_file(self, event):
         with wx.FileDialog(self, "Open Torrent File", wildcard="Torrent files (*.torrent)|*.torrent",
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
@@ -1221,17 +1859,23 @@ class MainFrame(wx.Frame):
                         num = info.num_files()
                         file_list = [(info.files().file_path(i), info.files().file_size(i)) for i in range(num)]
                     except Exception as e:
-                        print(f"Failed to parse torrent info: {e}")
+                        pass
 
-                # Get default path
-                default_path = self.config_manager.get_preferences().get('download_path', '')
+                # Use the cached client default (remote path when connected, fallback to preferences)
+                default_path = self._get_default_save_path()
                 
                 dlg = AddTorrentDialog(self, name, file_list, default_path)
                 if dlg.ShowModal() == wx.ID_OK:
                     save_path = dlg.get_selected_path()
+                    if not save_path:
+                        save_path = None
                     priorities = dlg.get_file_priorities()
+                    hash_hint = self._maybe_hash_from_torrent_bytes(data)
                     
                     if self.client:
+                        self._prepare_auto_start()
+                        if hash_hint:
+                            self.pending_hash_starts.add(hash_hint)
                         self.client.add_torrent_file(data, save_path, priorities)
                         self.refresh_data()
                 dlg.Destroy()
@@ -1245,21 +1889,27 @@ class MainFrame(wx.Frame):
             url = dlg.GetValue()
             if self.client:
                 try:
-                    # Get default path
-                    default_path = self.config_manager.get_preferences().get('download_path', '')
+                    # Use the cached client default (remote path when connected, fallback to preferences)
+                    default_path = self._get_default_save_path()
 
                     if url.startswith("magnet:"):
                         # For magnets, we can't see files yet, but user can set path
                         adlg = AddTorrentDialog(self, "Magnet Link", None, default_path)
                         if adlg.ShowModal() == wx.ID_OK:
                             save_path = adlg.get_selected_path()
-                            
+                            if not save_path:
+                                save_path = None
+                            hash_hint = self._maybe_hash_from_magnet(url)
+
                             trackers = self.fetch_trackers()
                             if trackers:
                                 import urllib.parse
                                 for t in trackers:
                                     url += f"&tr={urllib.parse.quote(t)}"
-                        
+
+                            self._prepare_auto_start()
+                            if hash_hint:
+                                self.pending_hash_starts.add(hash_hint)
                             self.client.add_torrent_url(url, save_path)
                             self.refresh_data()
                         adlg.Destroy()
@@ -1285,13 +1935,19 @@ class MainFrame(wx.Frame):
                             adlg = AddTorrentDialog(self, name, file_list, default_path)
                             if adlg.ShowModal() == wx.ID_OK:
                                 save_path = adlg.get_selected_path()
+                                if not save_path:
+                                    save_path = None
                                 priorities = adlg.get_file_priorities()
+                                hash_hint = self._maybe_hash_from_torrent_bytes(data)
+                                self._prepare_auto_start()
+                                if hash_hint:
+                                    self.pending_hash_starts.add(hash_hint)
                                 self.client.add_torrent_file(data, save_path, priorities)
                                 self.refresh_data()
                             adlg.Destroy()
                             
                         except Exception as e:
-                             wx.LogError(f"Failed to download torrent from URL: {e}")
+                            wx.LogError(f"Failed to download torrent from URL: {e}")
 
                 except Exception as e:
                     wx.LogError(f"Error adding URL: {e}")
@@ -1339,6 +1995,225 @@ class MainFrame(wx.Frame):
         action = self.client.start_torrent if self.client else None
         self._apply_to_selected(action, "Resume")
 
+
+    def on_recheck(self, event):
+        if not self.client or not hasattr(self.client, "recheck_torrent"):
+            self.statusbar.SetStatusText("Recheck not supported by this client.", 0)
+            return
+        try:
+            # Probe support
+            pass
+        except Exception:
+            pass
+        self._apply_to_selected(self.client.recheck_torrent, "Recheck")
+
+    def on_reannounce(self, event):
+        if not self.client or not hasattr(self.client, "reannounce_torrent"):
+            self.statusbar.SetStatusText("Reannounce not supported by this client.", 0)
+            return
+        self._apply_to_selected(self.client.reannounce_torrent, "Reannounce")
+
+    def _set_clipboard_text(self, text: str) -> bool:
+        try:
+            if not wx.TheClipboard.Open():
+                return False
+            wx.TheClipboard.SetData(wx.TextDataObject(text))
+            wx.TheClipboard.Close()
+            return True
+        except Exception:
+            try:
+                wx.TheClipboard.Close()
+            except Exception:
+                pass
+            return False
+
+    def _get_selected_torrent_objects(self):
+        hashes = self.torrent_list.get_selected_hashes()
+        if not hashes:
+            return [], []
+        tmap = {}
+        for t in self.all_torrents:
+            h = t.get("hash")
+            if h:
+                tmap[h] = t
+        objs = []
+        missing = []
+        for h in hashes:
+            t = tmap.get(h)
+            if t:
+                objs.append(t)
+            else:
+                missing.append(h)
+        return objs, missing
+
+    def on_copy_info_hash(self, event):
+        objs, missing = self._get_selected_torrent_objects()
+        hashes = [t.get("hash") for t in objs if t.get("hash")] + missing
+        hashes = [h for h in hashes if h]
+        if not hashes:
+            self.statusbar.SetStatusText("No torrents selected.", 0)
+            return
+        text = "\n".join(hashes)
+        if self._set_clipboard_text(text):
+            self.statusbar.SetStatusText("Info hash copied to clipboard.", 0)
+        else:
+            self.statusbar.SetStatusText("Failed to access clipboard.", 0)
+
+    def on_copy_magnet(self, event):
+        objs, missing = self._get_selected_torrent_objects()
+        hashes = [t.get("hash") for t in objs if t.get("hash")] + missing
+        hashes = [h for h in hashes if h]
+        if not hashes:
+            self.statusbar.SetStatusText("No torrents selected.", 0)
+            return
+
+        magnets = []
+        for h in hashes:
+            magnets.append(f"magnet:?xt=urn:btih:{h}")
+
+        text = "\n".join(magnets)
+        if self._set_clipboard_text(text):
+            self.statusbar.SetStatusText("Magnet link(s) copied to clipboard.", 0)
+        else:
+            self.statusbar.SetStatusText("Failed to access clipboard.", 0)
+
+    def _open_path(self, path: str):
+        if not path or not os.path.isdir(path):
+            return False
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+                return True
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+                return True
+            subprocess.Popen(["xdg-open", path])
+            return True
+        except Exception:
+            return False
+
+    def on_open_download_folder(self, event):
+        objs, missing = self._get_selected_torrent_objects()
+        if not objs:
+            self.statusbar.SetStatusText("No torrent selected.", 0)
+            return
+        # open the first selected torrent folder
+        t = objs[0]
+        path = t.get("save_path") or ""
+        if not path:
+            # fallback to client default save path
+            path = self.client_default_save_path or ""
+        if self._open_path(path):
+            self.statusbar.SetStatusText("Opened download folder.", 0)
+        else:
+            self.statusbar.SetStatusText("Download folder not available.", 0)
+
+    def on_create_torrent(self, event):
+        dlg = CreateTorrentDialog(self)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                dlg.Destroy()
+                return
+            try:
+                opts = dlg.get_options()
+            except Exception as e:
+                dlg.Destroy()
+                wx.MessageBox(str(e), "Create Torrent", wx.OK | wx.ICON_ERROR)
+                return
+            dlg.Destroy()
+        except Exception:
+            try:
+                dlg.Destroy()
+            except Exception:
+                pass
+            raise
+
+        if not lt:
+            wx.MessageBox("libtorrent is not available. Torrent creation requires python-libtorrent.", "Create Torrent", wx.OK | wx.ICON_ERROR)
+            return
+
+        source_path = opts["source_path"]
+        output_path = opts["output_path"]
+
+        progress = wx.ProgressDialog(
+            "Create Torrent",
+            "Hashing pieces and generating torrent metadata...",
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_PULSE | wx.PD_ELAPSED_TIME,
+        )
+
+        result = {"torrent_bytes": None, "magnet": "", "info_hash": "", "error": None}
+
+        def worker():
+            try:
+                torrent_bytes, magnet, info_hash = create_torrent_bytes(
+                    source_path=source_path,
+                    trackers=opts.get("trackers", []),
+                    web_seeds=opts.get("web_seeds", []),
+                    piece_size=opts.get("piece_size", 0),
+                    private=opts.get("private", False),
+                    comment=opts.get("comment", ""),
+                    creator=opts.get("creator", ""),
+                    source=opts.get("source", ""),
+                )
+                # Write output
+                out_dir = os.path.dirname(os.path.abspath(output_path))
+                if out_dir and not os.path.isdir(out_dir):
+                    os.makedirs(out_dir, exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(torrent_bytes)
+                result["torrent_bytes"] = torrent_bytes
+                result["magnet"] = magnet
+                result["info_hash"] = info_hash
+            except Exception as e:
+                result["error"] = str(e)
+
+        th = threading.Thread(target=worker, daemon=True)
+        th.start()
+
+        def poll():
+            if th.is_alive():
+                try:
+                    progress.Pulse()
+                except Exception:
+                    pass
+                wx.CallLater(200, poll)
+                return
+            try:
+                progress.Destroy()
+            except Exception:
+                pass
+
+            if result["error"]:
+                wx.MessageBox(result["error"], "Create Torrent", wx.OK | wx.ICON_ERROR)
+                return
+
+            # Optional clipboard copy
+            if opts.get("copy_magnet") and result.get("magnet"):
+                self._set_clipboard_text(result["magnet"])
+
+            # Optional add to client
+            if opts.get("add_to_client") and self.client:
+                try:
+                    # Add torrent file content; prompt for save path via existing dialog
+                    with open(output_path, "rb") as f:
+                        content = f.read()
+                    self._prepare_auto_start()
+                    self.client.add_torrent_file(content)
+                    self.refresh_data()
+                except Exception as e:
+                    wx.MessageBox(f"Created torrent, but failed to add to client: {e}", "Create Torrent", wx.OK | wx.ICON_WARNING)
+
+            msg = f"Torrent created:\n{output_path}"
+            if result.get("info_hash"):
+                msg += f"\nInfo Hash: {result['info_hash']}"
+            if result.get("magnet"):
+                msg += f"\nMagnet copied to clipboard." if opts.get("copy_magnet") else f"\nMagnet: {result['magnet']}"
+            wx.MessageBox(msg, "Create Torrent", wx.OK | wx.ICON_INFORMATION)
+
+        wx.CallLater(200, poll)
+
     def on_remove(self, event):
         hashes = self.torrent_list.get_selected_hashes()
         if hashes and wx.MessageBox(f"Remove {len(hashes)} torrents?", "Confirm", wx.YES_NO) == wx.YES:
@@ -1353,12 +2228,11 @@ class MainFrame(wx.Frame):
 
     def _remove_background(self, hashes, with_data):
         try:
-            if with_data:
-                # Assuming remove_torrent_with_data can handle a list of hashes
-                self.client.remove_torrent_with_data(hashes)
-            else:
-                # Assuming remove_torrent can handle a list of hashes
-                self.client.remove_torrent(hashes)
+            for h in hashes:
+                if with_data:
+                    self.client.remove_torrent_with_data(h)
+                else:
+                    self.client.remove_torrent(h)
             wx.CallAfter(self._on_action_complete, "Removed torrents")
         except Exception as e:
             wx.CallAfter(self._on_action_error, f"Remove failed: {e}")
@@ -1391,14 +2265,35 @@ class MainFrame(wx.Frame):
 
     def on_context_menu(self, event):
         menu = wx.Menu()
+
         start = menu.Append(wx.ID_ANY, "Start")
-        stop = menu.Append(wx.ID_ANY, "Stop")
+        pause = menu.Append(wx.ID_ANY, "Pause")
+        resume = menu.Append(wx.ID_ANY, "Resume")
+
+        menu.AppendSeparator()
+        recheck = menu.Append(wx.ID_ANY, "Force Recheck")
+        reannounce = menu.Append(wx.ID_ANY, "Force Reannounce")
+
+        menu.AppendSeparator()
+        copy_hash = menu.Append(wx.ID_ANY, "Copy Info Hash")
+        copy_magnet = menu.Append(wx.ID_ANY, "Copy Magnet Link")
+        open_folder = menu.Append(wx.ID_ANY, "Open Download Folder")
+
+        menu.AppendSeparator()
         remove = menu.Append(wx.ID_ANY, "Remove")
-        
+        remove_data = menu.Append(wx.ID_ANY, "Remove with Data")
+
         self.Bind(wx.EVT_MENU, self.on_start, start)
-        self.Bind(wx.EVT_MENU, self.on_stop, stop)
+        self.Bind(wx.EVT_MENU, self.on_pause, pause)
+        self.Bind(wx.EVT_MENU, self.on_resume, resume)
+        self.Bind(wx.EVT_MENU, self.on_recheck, recheck)
+        self.Bind(wx.EVT_MENU, self.on_reannounce, reannounce)
+        self.Bind(wx.EVT_MENU, self.on_copy_info_hash, copy_hash)
+        self.Bind(wx.EVT_MENU, self.on_copy_magnet, copy_magnet)
+        self.Bind(wx.EVT_MENU, self.on_open_download_folder, open_folder)
         self.Bind(wx.EVT_MENU, self.on_remove, remove)
-        
+        self.Bind(wx.EVT_MENU, self.on_remove_data, remove_data)
+
         self.PopupMenu(menu)
         menu.Destroy()
 
@@ -1424,7 +2319,11 @@ class MainFrame(wx.Frame):
                             import urllib.parse
                             for t in trackers:
                                 arg += f"&tr={urllib.parse.quote(t)}"
-                                
+                        
+                        self._prepare_auto_start()
+                        hash_hint = self._maybe_hash_from_magnet(arg)
+                        if hash_hint:
+                            self.pending_hash_starts.add(hash_hint)
                         self.client.add_torrent_url(arg)
                         self.statusbar.SetStatusText("Magnet link added from CLI", 0)
                         self.refresh_data()
@@ -1434,6 +2333,10 @@ class MainFrame(wx.Frame):
                     try:
                         with open(arg, 'rb') as f:
                             content = f.read()
+                        hash_hint = self._maybe_hash_from_torrent_bytes(content)
+                        self._prepare_auto_start()
+                        if hash_hint:
+                            self.pending_hash_starts.add(hash_hint)
                         self.client.add_torrent_file(content)
                         self.statusbar.SetStatusText("Torrent file added from CLI", 0)
                         self.refresh_data()
@@ -1443,7 +2346,7 @@ class MainFrame(wx.Frame):
                     wx.LogError(f"Invalid argument: {arg}")
 
         if not self.connected and not default_id:
-             self.on_connect(None)
+            self.on_connect(None)
 
 if __name__ == "__main__":
     try:

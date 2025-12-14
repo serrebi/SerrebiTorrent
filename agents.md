@@ -29,12 +29,14 @@
 - Legacy spec filename `rtorrentGUI.spec` still exists for backwards compatibility; it points to the same settings and emits SerrebiTorrent.exe.
 
 ## Packaging
-- Ship the entire `dist` folder: EXE + `config.json` + bundled libraries. No extra installers are provided.
+- Ship the entire `dist` folder: EXE + bundled libraries.
+- User data (profiles, preferences, resume data, logs) lives under `SerrebiTorrent_Data` next to the EXE in portable mode.
+- To preconfigure profiles for distribution, ship a `SerrebiTorrent_Data\config.json` (use `config.example.json` as a starting point).
 - If you rebrand the EXE, update both `.spec` files and any doc references. Remember to refresh the tray icon (`icon.ico`) if you change branding.
 
 ## Ops notes
 - Local mode needs the OpenSSL DLLs in `PATH`; `libtorrent_env.py` already injects both the repo root and Python’s `DLLs` directory. Don’t delete that helper.
-- Connection profiles, preferences, and session state write to `SerrebiTorrent_Data` under the repo (portable mode). Keep that directory next to the EXE if you expect resume data to persist.
+- Connection profiles, preferences, session state, and logs write to `SerrebiTorrent_Data` (portable mode) or per-user app data (installed mode).
 - Accessibility shortcuts are hard-coded in `MainFrame.__init__`. Update README if you touch them.
 - If you must run tests, there are no automated suites. Launch `python main.py` and exercise the UI manually.
 

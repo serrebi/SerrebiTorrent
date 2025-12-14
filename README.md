@@ -1,32 +1,28 @@
 # SerrebiTorrent
 
-SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents--whether they live on this PC or on a remote seedbox--without giving up accessibility or keyboard control. Launch it, pick (or create) a profile, and you can start or stop torrents, add new ones from files or magnet/HTTP links, and watch real-time stats for every tracker.
+SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents--whether they live on this PC or on a remote seedbox--without giving up accessibility or keyboard control. 
 
 ## What you get
 - Connect to local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, or Transmission from a single interface.
 - Live download/upload speeds, progress, ratio, tracker host, and status messages for each torrent.
-- **New:** Expanded sidebar filters including **Seeding**, **Stopped**, and **Error** categories.
+- **New:** create your own torrents!.
 - **Performance:** Background processing for all remote client interactions (updates, deletions, start/stop) ensures the UI remains responsive and lag-free.
 - Quick filters (All, Downloading, Complete, Active) plus a tracker tree in the sidebar.
 - Thoughtful keyboard workflow and tray support that play nicely with NVDA and other screen readers.
 
 ## Quick start on Windows
-1. Download or clone the SerrebiTorrent folder.
-2. Want the packaged build? Open `dist\SerrebiTorrent.exe`. Prefer source mode? Install Python 3.13 (64-bit), run `pip install -r requirements.txt`, then `python main.py`.
-3. The Connection Manager opens on first launch--add a profile that matches where your torrents run (local path, rTorrent URL, etc.).
-4. Click Connect and the main window refreshes every couple of seconds.
+Grab the latest release from the releases section, 
+https://github.com/serrebi/SerrebiTorrent/releases
+and place it in an empty folder. Unless I release setup files one day, It is a portable app.
 
-## Connecting to your client
-- **Local**: point the profile at your download directory. SerrebiTorrent owns a hidden libtorrent session so magnets just work.
-- **rTorrent**: use `scgi://host:port` for SCGI or `https://domain/RPC2` for XML-RPC. Basic auth and common SSO front ends are handled.
-- **qBittorrent / Transmission**: enter the WebUI URL plus your credentials. The app speaks the native APIs.
+## How to build
+I will not be going through installing python, and such. I asume you know how to do that, or can do it with Codex or Gemini.
 
-## Everyday tips
-- Add torrents through File -> Add Torrent File or File -> Add URL/Magnet. Magnets inherit any tracker list you define under Preferences -> Trackers.
-- The status bar shows global download/upload rates whenever you are connected.
-- Use the Torrent menu (or right-click) to start, stop, or remove selections, with Shift+Delete removing data too.
-- Preferences let you set default paths, global limits, and whether close/minimize sends the window to the tray.
+git clone https://github.com/serrebi/SerrebiTorrent
 
+Pip3 install -r ./requirements.txt
+PyInstaller --noconfirm --clean SerrebiTorrent.spec
+The .exe will be in the dist folder.
 ## Accessibility & shortcuts
 Everything stays reachable by keyboard:
 - Ctrl+Shift+C: Connection Manager
@@ -35,9 +31,9 @@ Everything stays reachable by keyboard:
 - Delete / Shift+Delete: Remove / Remove with data
 - Ctrl+A: Select all
 - Tab: Toggle focus between the sidebar and torrent list; double-clicking the tray icon restores the window.
+- Control N will allow you to create a torrent.
 
-Need to troubleshoot? Logs and helper scripts now live in `C:\Users\admin\coding\debug`, so the main folder stays clean. Open `agents.md` if you need technical or build details. Otherwise, enjoy managing your torrents without fuss.
-
+Need to troubleshoot? Logs live under `SerrebiTorrent_Data\logs` next to the EXE/script in portable mode (or per-user app data in installed mode). Open `agents.md` if you need technical or build details.
 
 
 

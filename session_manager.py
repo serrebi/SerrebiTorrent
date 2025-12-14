@@ -1,8 +1,6 @@
 import os
-import sys
 import threading
 import time
-import pickle
 
 from libtorrent_env import prepare_libtorrent_dlls
 
@@ -13,19 +11,7 @@ try:
 except ImportError:
     lt = None
 
-def get_app_data_path():
-    if getattr(sys, 'frozen', False):
-        # Portable mode: Store data next to the executable
-        base = os.path.dirname(sys.executable)
-    else:
-        # Dev mode: Store next to the script
-        base = os.path.dirname(os.path.abspath(__file__))
-        
-    path = os.path.join(base, 'SerrebiTorrent_Data')
-    if not os.path.exists(path):
-        os.makedirs(path)
-    return path
-
+from app_paths import get_state_dir
 from config_manager import ConfigManager
 
 class SessionManager:
@@ -41,9 +27,7 @@ class SessionManager:
         if not lt:
             raise RuntimeError("libtorrent not available")
             
-        self.state_dir = os.path.join(get_app_data_path(), 'state')
-        if not os.path.exists(self.state_dir):
-            os.makedirs(self.state_dir)
+        self.state_dir = get_state_dir()
 
         # Create Session
         self.ses = lt.session()
@@ -80,8 +64,8 @@ class SessionManager:
         settings = {
             'user_agent': 'qBittorrent/4.6.3',
             'peer_fingerprint': b'-qB4630-',
-            'enable_dht': True,
-            'enable_lsd': True,
+            'enable_dht': prefs.get('enable_dht', True),
+            'enable_lsd': prefs.get('enable_lsd', True),
             'enable_upnp': prefs.get('enable_upnp', True),
             'enable_natpmp': prefs.get('enable_natpmp', True),
             'alert_mask': lt.alert.category_t.status_notification | lt.alert.category_t.storage_notification | lt.alert.category_t.error_notification,

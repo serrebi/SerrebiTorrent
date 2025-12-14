@@ -3,6 +3,8 @@ import time
 from urllib.parse import urlparse
 import requests
 
+from app_paths import get_log_path
+
 from libtorrent_env import prepare_libtorrent_dlls
 
 class BaseClient(abc.ABC):
@@ -61,6 +63,30 @@ class BaseClient(abc.ABC):
         """Returns (down_rate, up_rate) in bytes/s"""
         pass
 
+    def get_app_preferences(self):
+        """Retrieve app preferences from the client (if supported)."""
+        return None
+
+    def set_app_preferences(self, prefs):
+        """Apply app preferences through the client (if supported)."""
+        raise NotImplementedError
+    def get_default_save_path(self):
+        """Optional override for client-specific default download directory."""
+        return None
+
+
+    def recheck_torrent(self, info_hash):
+        """Request a hash check / verification (if supported)."""
+        raise NotImplementedError
+
+    def reannounce_torrent(self, info_hash):
+        """Request an immediate tracker announce (if supported)."""
+        raise NotImplementedError
+
+    def get_torrent_save_path(self, info_hash):
+        """Return the torrent's save path if available (local client only)."""
+        return None
+
 # --- rTorrent Client (Existing + Adapted) ---
 import xmlrpc.client
 import ssl
@@ -109,7 +135,12 @@ class SCGITransport(xmlrpc.client.Transport):
                     if not chunk: break
                     response_data += chunk
         except OSError as e:
-            with open(r"C:\\Users\\admin\\coding\\debug\\gui_debug.log", "a") as f: f.write(f"SCGI Socket Error to {self.scgi_host}: {e}\n")
+            # Never hard-code user paths. Log into the app data logs directory.
+            try:
+                with open(get_log_path("gui_debug.log"), "a", encoding="utf-8") as f:
+                    f.write(f"SCGI Socket Error to {self.scgi_host}: {e}\n")
+            except Exception:
+                pass
             raise xmlrpc.client.ProtocolError(host + handler, 500, str(e), {})
 
         response_str = response_data.decode('utf-8', errors='replace')
@@ -347,7 +378,8 @@ class QBittorrentClient(BaseClient):
                     "message": "", # qBit doesn't have generic message field easily mapped here
                     "down_rate": t.dlspeed,
                     "up_rate": t.upspeed,
-                    "tracker_domain": tracker
+                    "tracker_domain": tracker,
+                    "save_path": getattr(t, "download_dir", None) or getattr(t, "downloadDir", None)
                 })
             return results
         except Exception as e:
@@ -355,7 +387,20 @@ class QBittorrentClient(BaseClient):
             return []
 
     def start_torrent(self, info_hash):
-        self.client.torrents_resume(torrent_hashes=info_hash)
+        try:
+            self.client.torrents_set_auto_management(False, torrent_hashes=info_hash)
+        except Exception:
+            pass
+
+        try:
+            self.client.torrents_set_force_start(True, torrent_hashes=info_hash)
+        except Exception:
+            pass
+
+        try:
+            self.client.torrents_resume(torrent_hashes=info_hash)
+        except Exception:
+            pass
 
     def stop_torrent(self, info_hash):
         self.client.torrents_pause(torrent_hashes=info_hash)
@@ -376,9 +421,44 @@ class QBittorrentClient(BaseClient):
         if save_path: kwargs['save_path'] = save_path
         self.client.torrents_add(torrent_files=file_content, **kwargs)
 
+    def recheck_torrent(self, info_hash):
+        try:
+            self.client.torrents_recheck(torrent_hashes=info_hash)
+        except Exception as e:
+            raise NotImplementedError(str(e))
+
+    def reannounce_torrent(self, info_hash):
+        try:
+            self.client.torrents_reannounce(torrent_hashes=info_hash)
+        except Exception as e:
+            raise NotImplementedError(str(e))
+
+
+    def get_default_save_path(self):
+        try:
+            prefs = self.client.app_preferences()
+            save_path = getattr(prefs, 'save_path', None)
+            if not save_path and isinstance(prefs, dict):
+                save_path = prefs.get('save_path')
+            return save_path
+        except Exception:
+            return None
+
     def get_global_stats(self):
         info = self.client.transfer_info()
         return info.dl_info_speed, info.up_info_speed
+
+    def get_app_preferences(self):
+        try:
+            prefs = self.client.app_preferences()
+            if isinstance(prefs, dict):
+                return dict(prefs)
+            return prefs.as_dict()
+        except Exception:
+            return None
+
+    def set_app_preferences(self, prefs):
+        self.client.app_set_preferences(prefs)
 
 
 # --- Transmission Client ---
@@ -436,7 +516,8 @@ class TransmissionClient(BaseClient):
                     "message": t.error_string,
                     "down_rate": t.rate_download,
                     "up_rate": t.rate_upload,
-                    "tracker_domain": tracker
+                    "tracker_domain": tracker,
+                    "save_path": getattr(t, "download_dir", None) or getattr(t, "downloadDir", None)
                 })
             return results
         except Exception as e:
@@ -469,6 +550,41 @@ class TransmissionClient(BaseClient):
         kwargs = {}
         if save_path: kwargs['download_dir'] = save_path
         self.client.add_torrent(b64, **kwargs)
+
+    def recheck_torrent(self, info_hash):
+        # transmission-rpc varies by version; try common method names.
+        if hasattr(self.client, 'verify_torrent'):
+            try:
+                self.client.verify_torrent([info_hash])
+                return
+            except Exception:
+                try:
+                    self.client.verify_torrent(info_hash)
+                    return
+                except Exception as e:
+                    raise NotImplementedError(str(e))
+        raise NotImplementedError('Torrent verification not supported by transmission-rpc client')
+
+    def reannounce_torrent(self, info_hash):
+        if hasattr(self.client, 'reannounce_torrent'):
+            try:
+                self.client.reannounce_torrent([info_hash])
+                return
+            except Exception:
+                try:
+                    self.client.reannounce_torrent(info_hash)
+                    return
+                except Exception as e:
+                    raise NotImplementedError(str(e))
+        raise NotImplementedError('Reannounce not supported by transmission-rpc client')
+
+
+    def get_default_save_path(self):
+        try:
+            session = self.client.get_session()
+            return getattr(session, 'download_dir', None)
+        except Exception:
+            return None
 
     def get_global_stats(self):
         s = self.client.session_stats()
@@ -557,7 +673,8 @@ class LocalClient(BaseClient):
                 "message": s.errc.message() if s.errc else "",
                 "down_rate": s.download_payload_rate,
                 "up_rate": s.upload_payload_rate,
-                "tracker_domain": tracker
+                "tracker_domain": tracker,
+                    "save_path": getattr(t, "download_dir", None) or getattr(t, "downloadDir", None)
             })
         return results
 
@@ -607,3 +724,34 @@ class LocalClient(BaseClient):
              if str(h.info_hash()) == info_hash_str:
                  return h
         return None
+
+    def recheck_torrent(self, info_hash):
+        h = self._get_handle(info_hash)
+        if not h:
+            return
+        try:
+            h.force_recheck()
+        except Exception as e:
+            raise NotImplementedError(str(e))
+
+    def reannounce_torrent(self, info_hash):
+        h = self._get_handle(info_hash)
+        if not h:
+            return
+        try:
+            h.force_reannounce()
+        except Exception as e:
+            raise NotImplementedError(str(e))
+
+    def get_torrent_save_path(self, info_hash):
+        h = self._get_handle(info_hash)
+        if not h:
+            return None
+        try:
+            return getattr(h.status(), 'save_path', None)
+        except Exception:
+            return None
+
+
+    def get_default_save_path(self):
+        return self._get_effective_download_path()
