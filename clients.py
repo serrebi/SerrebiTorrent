@@ -29,7 +29,8 @@ class BaseClient(abc.ABC):
             "message": str,
             "down_rate": int (bytes/s),
             "up_rate": int (bytes/s),
-            "tracker_domain": str
+            "tracker_domain": str,
+            "availability": float | None
         }
         """
         pass
@@ -248,10 +249,12 @@ class RTorrentClient(BaseClient):
             # Fields: hash, bytes_done, up_total, ratio, state, is_active, is_hash_checking, message, down_rate, up_rate, name, size
             dynamic_raw = self.server.d.multicall2(
                 "", "main",
-                "d.hash=", "d.bytes_done=", "d.up.total=", "d.ratio=", 
-                "d.state=", "d.is_active=", "d.is_hash_checking=", 
+                "d.hash=", "d.bytes_done=", "d.up.total=", "d.ratio=",
+                "d.state=", "d.is_active=", "d.is_hash_checking=",
                 "d.message=", "d.down.rate=", "d.up.rate=",
-                "d.name=", "d.size_bytes="
+                "d.name=", "d.size_bytes=",
+                "d.left_bytes=", "d.connection_seed=", "d.connection_leech=",
+                "d.peers_complete=", "d.peers_accounted="
             )
             
             if not dynamic_raw: return []
@@ -299,8 +302,18 @@ class RTorrentClient(BaseClient):
                 h = t[0]
                 tracker_domain = self.tracker_cache.get(h, "")
                 
-                # Indices shifted because we added name/size to main call
-                # 0=hash, 1=done, 2=up, 3=ratio, 4=state, 5=active, 6=check, 7=msg, 8=down, 9=up, 10=name, 11=size
+                # 0=hash, 1=done, 2=up, 3=ratio, 4=state, 5=active, 6=check, 7=msg,
+                # 8=down, 9=up, 10=name, 11=size, 12=left_bytes, 13=conn_seed, 14=conn_leech,
+                # 15=peers_complete, 16=peers_accounted
+
+                down_rate = self._safe_int(t[8])
+                left_bytes = self._safe_int(t[12])
+                eta = -1
+                if down_rate > 0 and left_bytes > 0:
+                    try:
+                        eta = int(left_bytes / down_rate)
+                    except Exception:
+                        eta = -1
                 
                 results.append({
                     "hash": h,
@@ -313,9 +326,15 @@ class RTorrentClient(BaseClient):
                     "active": self._safe_int(t[5]),
                     "hashing": self._safe_int(t[6]),
                     "message": self._safe_str(t[7]),
-                    "down_rate": self._safe_int(t[8]),
+                    "down_rate": down_rate,
                     "up_rate": self._safe_int(t[9]),
                     "tracker_domain": tracker_domain
+                    ,
+                    "eta": eta,
+                    "seeds_connected": self._safe_int(t[13]),
+                    "seeds_total": self._safe_int(t[15]),
+                    "leechers_connected": self._safe_int(t[14]),
+                    "leechers_total": self._safe_int(t[16])
                 })
             return results
         except Exception as e:
@@ -402,6 +421,12 @@ class QBittorrentClient(BaseClient):
                     "down_rate": t.dlspeed,
                     "up_rate": t.upspeed,
                     "tracker_domain": tracker,
+                    "eta": int(getattr(t, "eta", -1) or -1),
+                    "seeds_connected": int(getattr(t, "num_seeds", 0) or 0),
+                    "seeds_total": int(getattr(t, "num_complete", 0) or 0),
+                    "leechers_connected": int(getattr(t, "num_leechs", 0) or 0),
+                    "leechers_total": int(getattr(t, "num_incomplete", 0) or 0),
+                    "availability": (float(getattr(t, "availability", 0) or 0) if getattr(t, "availability", None) is not None else None),
                     "save_path": getattr(t, "download_dir", None) or getattr(t, "downloadDir", None)
                 })
             return results
@@ -577,7 +602,25 @@ class TransmissionClient(BaseClient):
                     # t.trackers is list of objects
                     try:
                         tracker = urlparse(t.trackers[0].announce).hostname or ""
-                    except: pass
+                    except:
+                        pass
+
+                # Availability (distributed copies) if the RPC provides piece availability.
+                availability_copies = None
+                try:
+                    al = getattr(t, "availability", None)
+                    if isinstance(al, (list, tuple)) and al:
+                        mn = min(al)
+                        extra = 0
+                        for v in al:
+                            try:
+                                if int(v) > int(mn):
+                                    extra += 1
+                            except Exception:
+                                continue
+                        availability_copies = float(mn) + (extra / float(len(al)))
+                except Exception:
+                    availability_copies = None
 
                 results.append({
                     "hash": t.hashString,
@@ -593,6 +636,12 @@ class TransmissionClient(BaseClient):
                     "down_rate": t.rate_download,
                     "up_rate": t.rate_upload,
                     "tracker_domain": tracker,
+                    "eta": int(getattr(t, "eta", -1) or -1),
+                    "seeds_connected": int(getattr(t, "peersSendingToUs", 0) or 0),
+                    "seeds_total": int(getattr(t, "seeders", 0) or 0),
+                    "leechers_connected": int(getattr(t, "peersGettingFromUs", 0) or 0),
+                    "leechers_total": int(getattr(t, "leechers", 0) or 0),
+                    "availability": availability_copies,
                     "save_path": getattr(t, "download_dir", None) or getattr(t, "downloadDir", None)
                 })
             return results
@@ -746,6 +795,46 @@ class LocalClient(BaseClient):
             if not save_path:
                 save_path = self._get_effective_download_path()
 
+            # Peers and ETA (best effort)
+            seeds_connected = getattr(s, 'num_seeds', 0)
+            peers_connected = getattr(s, 'num_peers', None)
+            if peers_connected is None:
+                peers_connected = getattr(s, 'num_connections', 0)
+            leechers_connected = 0
+            try:
+                leechers_connected = max(0, int(peers_connected) - int(seeds_connected))
+            except Exception:
+                leechers_connected = 0
+            seeds_total = getattr(s, 'num_complete', 0)
+            leechers_total = getattr(s, 'num_incomplete', 0)
+
+            eta = -1
+            try:
+                remaining = max(0, int(s.total_wanted) - int(s.total_wanted_done))
+                rate = int(getattr(s, 'download_payload_rate', 0) or 0)
+                if rate > 0 and remaining > 0:
+                    eta = int(remaining / rate)
+            except Exception:
+                eta = -1
+
+            # Availability (distributed copies) from libtorrent when available.
+            availability_copies = None
+            try:
+                if hasattr(s, "distributed_copies"):
+                    availability_copies = float(getattr(s, "distributed_copies"))
+                elif hasattr(s, "distributed_full_copies"):
+                    full = float(getattr(s, "distributed_full_copies"))
+                    frac = getattr(s, "distributed_fraction", None)
+                    if frac is not None:
+                        try:
+                            availability_copies = full + (float(frac) / 1000.0)
+                        except Exception:
+                            availability_copies = full
+                    else:
+                        availability_copies = full
+            except Exception:
+                availability_copies = None
+
             results.append({
                 "hash": str(h.info_hash()),
                 "name": name,
@@ -760,7 +849,13 @@ class LocalClient(BaseClient):
                 "down_rate": s.download_payload_rate,
                 "up_rate": s.upload_payload_rate,
                 "tracker_domain": tracker,
-                "save_path": save_path
+                "save_path": save_path,
+                "eta": eta,
+                "seeds_connected": int(seeds_connected) if seeds_connected is not None else 0,
+                "seeds_total": int(seeds_total) if seeds_total is not None else 0,
+                "leechers_connected": int(leechers_connected) if leechers_connected is not None else 0,
+                "leechers_total": int(leechers_total) if leechers_total is not None else 0,
+                "availability": availability_copies
             })
         return results
 

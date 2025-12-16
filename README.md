@@ -5,7 +5,7 @@ SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents
 ## What you get
 - Connect to local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, or Transmission from a single interface.
 - Live download/upload speeds, progress, ratio, tracker host, and status messages for each torrent.
-- **create your own torrents!.
+- **New:** create your own torrents!.
 - **Performance:** Background processing for all remote client interactions (updates, deletions, start/stop) ensures the UI remains responsive and lag-free.
 - Quick filters (All, Downloading, Complete, Active) plus a tracker tree in the sidebar.
 - Thoughtful keyboard workflow and tray support that play nicely with NVDA and other screen readers.
@@ -34,3 +34,8 @@ Everything stays reachable by keyboard:
 - Control N will allow you to create a torrent.
 
 Need to troubleshoot? Logs live under `SerrebiTorrent_Data\logs` next to the EXE/script in portable mode (or per-user app data in installed mode). Open `agents.md` if you need technical or build details.
+
+
+
+
+

@@ -23,10 +23,15 @@ from torrent_creator import CreateTorrentDialog, create_torrent_bytes
 # Constants for List Columns
 COL_NAME = 0
 COL_SIZE = 1
-COL_DONE = 2
-COL_UP = 3
-COL_RATIO = 4
-COL_STATUS = 5
+COL_STATUS = 2
+COL_TIME_LEFT = 3
+COL_SEEDS = 4
+COL_LEECHERS = 5
+COL_RATIO = 6
+COL_AVAILABILITY = 7
+
+# Rows in the torrent list carry an extra hidden value at the end (info hash).
+ROW_HASH_INDEX = -1
 APP_NAME = "SerrebiTorrent"
 
 
@@ -160,6 +165,25 @@ class AddTorrentDialog(wx.Dialog):
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} PB"
+
+    def fmt_ratio(self, ratio_val):
+        """Format ratio consistently across clients.
+
+        Most clients provide ratio as an integer scaled by 1000 (e.g. 1500 == 1.5).
+        Some may provide a float (e.g. 1.5).
+        """
+        try:
+            if ratio_val is None:
+                return ""
+            r = float(ratio_val)
+        except Exception:
+            return ""
+        if r < 0:
+            r = 0.0
+        # Heuristic: values above 50 are almost certainly scaled by 1000.
+        if r > 50.0:
+            r = r / 1000.0
+        return f"{r:.2f}"
 
     def update_item_label(self, item, checked):
         data = self.item_map.get(item)
@@ -323,10 +347,12 @@ class TorrentListCtrl(wx.ListCtrl):
 
         self.InsertColumn(COL_NAME, "Name", width=300)
         self.InsertColumn(COL_SIZE, "Size", width=100)
-        self.InsertColumn(COL_DONE, "Done", width=100)
-        self.InsertColumn(COL_UP, "Uploaded", width=100)
+        self.InsertColumn(COL_STATUS, "Status", width=220)
+        self.InsertColumn(COL_TIME_LEFT, "Time Left", width=110)
+        self.InsertColumn(COL_SEEDS, "Seeds", width=120)
+        self.InsertColumn(COL_LEECHERS, "Leechers", width=160)
         self.InsertColumn(COL_RATIO, "Ratio", width=80)
-        self.InsertColumn(COL_STATUS, "Status", width=200)
+        self.InsertColumn(COL_AVAILABILITY, "Availability", width=110)
 
         self.SetName("Torrent List")
 
@@ -355,7 +381,7 @@ class TorrentListCtrl(wx.ListCtrl):
         item = self.GetFirstSelected()
         while item != -1:
             try:
-                selection.append(self.data[item][6]) 
+                selection.append(self.data[item][ROW_HASH_INDEX])
             except:
                 pass
             item = self.GetNextSelected(item)
@@ -1711,33 +1737,64 @@ class MainFrame(wx.Frame):
                 total = t.get('size', 1)
                 pct = 0
                 if total > 0: pct = (done / total) * 100
-                progress = f"{pct:.1f}%"
-                
-                uploaded = self.fmt_size(t.get('up_total', 0))
-                
-                ratio_val = t.get('ratio', 0)
-                ratio = f"{ratio_val / 1000:.2f}"
+
+                # Time left (ETA)
+                eta = t.get('eta', None)
+                if eta is None:
+                    # Fallback: estimate from remaining bytes and current download rate.
+                    try:
+                        remaining = max(0, int(t.get('size', 0)) - int(t.get('done', 0)))
+                        down_rate = int(t.get('down_rate', 0) or 0)
+                        if down_rate > 0 and remaining > 0:
+                            eta = int(remaining / down_rate)
+                        else:
+                            eta = -1
+                    except Exception:
+                        eta = -1
+                time_left = self.fmt_eta(eta)
+
+                # Seeds / Leechers (connected / total)
+                seeds_connected = t.get('seeds_connected', 0)
+                seeds_total = t.get('seeds_total', 0)
+                leechers_connected = t.get('leechers_connected', 0)
+                leechers_total = t.get('leechers_total', 0)
+
+                seeds_str = self.fmt_pair(seeds_connected, seeds_total)
+                leechers_str = self.fmt_pair(leechers_connected, leechers_total)
                 
                 state = t.get('state', 0)
                 active = t.get('active', 0)
                 hashing = t.get('hashing', 0)
-                msg = t.get('message', '')
-                down_rate = t.get('down_rate', 0)
-                up_rate = t.get('up_rate', 0)
+                msg = self.clean_status_message(t.get('message', ''))
+                try:
+                    down_rate = int(t.get('down_rate', 0) or 0)
+                except Exception:
+                    down_rate = 0
+                try:
+                    up_rate = int(t.get('up_rate', 0) or 0)
+                except Exception:
+                    up_rate = 0
+                if up_rate > 0:
+                    leechers_str += f" upload speed: {self.fmt_size(up_rate)}/s"
                 tracker_domain = t.get('tracker_domain', 'Unknown') or 'Unknown'
-                
+
+                ratio_str = self.fmt_ratio(t.get('ratio', 0))
+
+                availability_str = self.fmt_availability(t.get('availability', None))
+
                 status_str = "Stopped"
                 if hashing:
                     status_str = "Checking"
                 elif state == 1:
                     if pct >= 100:
                         status_str = "Seeding"
-                        if up_rate > 0: status_str += f" {self.fmt_size(up_rate)}/s"
                     else:
-                        status_str = "Downloading"
-                        if down_rate > 0: status_str += f" {self.fmt_size(down_rate)}/s"
-                
-                if msg: status_str += f" ({msg})"
+                        status_str = f"Downloaded: {pct:.1f}%"
+                        if down_rate > 0:
+                            status_str += f"; {self.fmt_size(down_rate)}/s"
+
+                if msg:
+                    status_str += f" ({msg})"
 
                 t_hash = t.get('hash', '')
                 
@@ -1764,7 +1821,7 @@ class MainFrame(wx.Frame):
                 elif filter_mode == tracker_domain: include = True
                 
                 if include:
-                    display_data.append([name, size, progress, uploaded, ratio, status_str, t_hash])
+                    display_data.append([name, size, status_str, time_left, seeds_str, leechers_str, ratio_str, availability_str, t_hash])
             
             g_down, g_up = 0, 0
             try:
@@ -1849,6 +1906,114 @@ class MainFrame(wx.Frame):
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} PB"
+
+    def fmt_ratio(self, ratio_val):
+        """Format ratio consistently across clients.
+
+        Most clients provide ratio as an integer scaled by 1000 (e.g. 1500 == 1.5).
+        Some may provide a float (e.g. 1.5).
+        """
+        try:
+            if ratio_val is None:
+                return ""
+            r = float(ratio_val)
+        except Exception:
+            return ""
+        if r < 0:
+            r = 0.0
+        # Heuristic: values above 50 are almost certainly scaled by 1000.
+        if r > 50.0:
+            r = r / 1000.0
+        return f"{r:.2f}"
+
+    def fmt_availability(self, avail_val):
+        """Format availability (distributed copies) as a short string."""
+        try:
+            if avail_val is None:
+                return "—"
+            a = float(avail_val)
+        except Exception:
+            return "—"
+        if a < 0:
+            return "—"
+        return f"{a:.2f}"
+
+    def fmt_eta(self, seconds):
+        """Format an ETA in seconds into a short, screen-reader-friendly string."""
+        try:
+            if seconds is None:
+                return "—"
+            seconds = int(seconds)
+        except Exception:
+            return "—"
+
+        if seconds < 0:
+            return "—"
+        if seconds == 0:
+            return "0s"
+
+        s = seconds
+        days = s // 86400
+        s %= 86400
+        hours = s // 3600
+        s %= 3600
+        minutes = s // 60
+        s %= 60
+
+        if days > 0:
+            return f"{days}d {hours}h"
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        if minutes > 0:
+            return f"{minutes}m {s}s"
+        return f"{s}s"
+
+    def fmt_pair(self, connected, total):
+        """Format connected/total counts.
+
+        Uses '?' for unknown values (None, non-numeric, negative).
+        """
+        def to_int_or_none(v):
+            if v is None:
+                return None
+            try:
+                iv = int(v)
+            except Exception:
+                return None
+            if iv < 0:
+                return None
+            return iv
+
+        c = to_int_or_none(connected)
+        t = to_int_or_none(total)
+
+        c_str = str(c) if c is not None else "?"
+        t_str = str(t) if t is not None else "?"
+        return f"{c_str}/{t_str}"
+
+    def clean_status_message(self, msg):
+        """Drop noisy/undefined 'success' messages that some backends return as an error string."""
+        if msg is None:
+            return ""
+        try:
+            m = str(msg).strip()
+        except Exception:
+            return ""
+        if not m:
+            return ""
+        low = m.lower().strip()
+        # Common 'no error' strings (not useful to show).
+        phrase = "the operation completed successfully"
+        if low.rstrip('.').strip() == phrase:
+            return ""
+        if phrase in low:
+            # If the message is only that phrase (possibly with punctuation), drop it.
+            remainder = low.replace(phrase, "").strip(" -;:().[]{}\t\r\n")
+            if not remainder:
+                return ""
+        if low in ("success", "ok", "no error", "none"):
+            return ""
+        return m
 
     def fetch_trackers(self):
         prefs = self.config_manager.get_preferences()
