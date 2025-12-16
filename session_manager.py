@@ -243,8 +243,18 @@ class SessionManager:
         h = self._find_handle(info_hash)
         if h:
             # Remove from session
-            # Option 1 means delete_files (if True). 0 means keep files.
-            self.ses.remove_torrent(h, 1 if delete_files else 0)
+            # Remove from session.
+            flags = 0
+            if delete_files:
+                flags = 1
+                try:
+                    if hasattr(lt, 'remove_flags_t') and hasattr(lt.remove_flags_t, 'delete_files'):
+                        flags = int(lt.remove_flags_t.delete_files)
+                    elif hasattr(lt, 'options_t') and hasattr(lt.options_t, 'delete_files'):
+                        flags = int(lt.options_t.delete_files)
+                except Exception:
+                    flags = 1
+            self.ses.remove_torrent(h, flags)
             
             # Clean up state files to prevent resurrection
             try:

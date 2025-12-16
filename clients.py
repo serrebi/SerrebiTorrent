@@ -50,6 +50,29 @@ class BaseClient(abc.ABC):
     def remove_torrent_with_data(self, info_hash):
         pass
 
+    def remove_torrents(self, info_hashes, delete_files=False):
+        """Remove multiple torrents.
+
+        Default implementation loops over :meth:`remove_torrent` or
+        :meth:`remove_torrent_with_data`.
+        """
+        if not info_hashes:
+            return
+        # Accept a single hash as a string/bytes.
+        if isinstance(info_hashes, (str, bytes)):
+            info_hashes = [info_hashes.decode("utf-8", "ignore") if isinstance(info_hashes, bytes) else info_hashes]
+
+        for h in info_hashes:
+            if not h:
+                continue
+            h = str(h).strip()
+            if not h:
+                continue
+            if delete_files:
+                self.remove_torrent_with_data(h)
+            else:
+                self.remove_torrent(h)
+
     @abc.abstractmethod
     def add_torrent_url(self, url, save_path=None):
         pass
@@ -405,11 +428,64 @@ class QBittorrentClient(BaseClient):
     def stop_torrent(self, info_hash):
         self.client.torrents_pause(torrent_hashes=info_hash)
 
+    def _normalize_hashes(self, info_hashes):
+        if not info_hashes:
+            return []
+        if isinstance(info_hashes, (str, bytes)):
+            info_hashes = [info_hashes.decode('utf-8', 'ignore') if isinstance(info_hashes, bytes) else info_hashes]
+        cleaned = []
+        for h in info_hashes:
+            if not h:
+                continue
+            h = str(h).strip()
+            if not h:
+                continue
+            cleaned.append(h.lower())
+        seen = set()
+        out = []
+        for h in cleaned:
+            if h in seen:
+                continue
+            seen.add(h)
+            out.append(h)
+        return out
+
+    def remove_torrents(self, info_hashes, delete_files=False):
+        hashes = self._normalize_hashes(info_hashes)
+        if not hashes:
+            return
+        joined = '|'.join(hashes)
+        last_err = None
+        for attempt in range(2):
+            try:
+                # Use joined string to avoid accidental per-character iteration in some library versions.
+                try:
+                    return self.client.torrents_delete(torrent_hashes=joined, delete_files=delete_files)
+                except TypeError:
+                    try:
+                        return self.client.torrents_delete(torrent_hashes=hashes, delete_files=delete_files)
+                    except TypeError:
+                        try:
+                            return self.client.torrents_delete(hashes=joined, delete_files=delete_files)
+                        except TypeError:
+                            return self.client.torrents_delete(hashes=hashes, delete_files=delete_files)
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    try:
+                        self.client.auth_log_in()
+                        continue
+                    except Exception:
+                        break
+        if last_err:
+            raise last_err
+
     def remove_torrent(self, info_hash):
-        self.client.torrents_delete(torrent_hashes=info_hash, delete_files=False)
+        self.remove_torrents([info_hash], delete_files=False)
 
     def remove_torrent_with_data(self, info_hash):
-        self.client.torrents_delete(torrent_hashes=info_hash, delete_files=True)
+        self.remove_torrents([info_hash], delete_files=True)
+
 
     def add_torrent_url(self, url, save_path=None):
         kwargs = {}
@@ -660,6 +736,16 @@ class LocalClient(BaseClient):
             if s.all_time_download > 0:
                 ratio = (s.all_time_upload / s.all_time_download) * 1000
             
+            save_path = getattr(s, 'save_path', None)
+            if not save_path:
+                try:
+                    if hasattr(h, 'save_path'):
+                        save_path = h.save_path()
+                except Exception:
+                    save_path = None
+            if not save_path:
+                save_path = self._get_effective_download_path()
+
             results.append({
                 "hash": str(h.info_hash()),
                 "name": name,
@@ -674,7 +760,7 @@ class LocalClient(BaseClient):
                 "down_rate": s.download_payload_rate,
                 "up_rate": s.upload_payload_rate,
                 "tracker_domain": tracker,
-                    "save_path": getattr(t, "download_dir", None) or getattr(t, "downloadDir", None)
+                "save_path": save_path
             })
         return results
 

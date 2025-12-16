@@ -1,36 +1,40 @@
 # SerrebiTorrent
 
-SerrebiTorrent is a portable Windows client that keeps you in control of torrents on your PC or a remote seedbox—fast, keyboard-friendly, and screen-reader aware.
+SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents--whether they live on this PC or on a remote seedbox--without giving up accessibility or keyboard control. 
 
-## Highlights
-- One interface for local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, and Transmission.
-- Live stats (speeds, progress, ratio, tracker host, status) plus quick filters (All, Downloading, Complete, Active) and a tracker tree.
-- Create torrents, manage remote clients in the background, and keep the UI responsive even when rTorrent or Transmission live elsewhere.
-- Designed for keyboard workflows, tray control, and NVDA-friendly navigation.
+## What you get
+- Connect to local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, or Transmission from a single interface.
+- Live download/upload speeds, progress, ratio, tracker host, and status messages for each torrent.
+- **New:** create your own torrents!.
+- **Performance:** Background processing for all remote client interactions (updates, deletions, start/stop) ensures the UI remains responsive and lag-free.
+- Quick filters (All, Downloading, Complete, Active) plus a tracker tree in the sidebar.
+- Thoughtful keyboard workflow and tray support that play nicely with NVDA and other screen readers.
 
-## Download & run
-1. Grab the latest ZIP from the [Releases page](https://github.com/serrebi/SerrebiTorrent/releases).
-2. Extract it to an empty folder.
-3. Launch `SerrebiTorrent.exe` (portable mode doesn’t touch your registry or user profile).
+## Quick start on Windows
+Grab the latest release from the releases section, 
+https://github.com/serrebi/SerrebiTorrent/releases
+and place it in an empty folder. Unless I release setup files one day, It is a portable app.
 
-## Build (Python + PyInstaller)
-1. Clone the repo: `git clone https://github.com/serrebi/SerrebiTorrent`
-2. Install dependencies: `pip3 install -r requirements.txt`
-3. Build: `pyinstaller --noconfirm --clean SerrebiTorrent.spec`
-4. Grab the `.exe` from `dist\SerrebiTorrent\`.
+## How to build
+I will not be going through installing python, and such. I asume you know how to do that, or can do it with Codex or Gemini.
 
+git clone https://github.com/serrebi/SerrebiTorrent
+
+Pip3 install -r ./requirements.txt
+PyInstaller --noconfirm --clean SerrebiTorrent.spec
+The .exe will be in the dist folder.
 ## Accessibility & shortcuts
-Everything is keyboard-accessible:
-- `Ctrl+Shift+C`: Connection manager
-- `Ctrl+O` / `Ctrl+U`: Add torrent file / Add URL or magnet
-- `Ctrl+S` / `Ctrl+P`: Start / Stop selections
-- `Ctrl+A`: Select all
-- `Delete` / `Shift+Delete`: Remove / Remove + data
-- `Tab`: Toggle focus between sidebar and list
-- `Ctrl+N`: Create new torrent
-- Double-click tray icon to restore the window.
+Everything stays reachable by keyboard:
+- Ctrl+Shift+C: Connection Manager
+- Ctrl+O / Ctrl+U: Add torrent file / Add URL or magnet
+- Ctrl+S / Ctrl+P: Start / Stop selected torrents
+- Delete / Shift+Delete: Remove / Remove with data
+- Ctrl+A: Select all
+- Tab: Toggle focus between the sidebar and torrent list; double-clicking the tray icon restores the window.
+- Control N will allow you to create a torrent.
 
-Logs live under `SerrebiTorrent_Data\logs` beside the EXE (portable) or under per-user app data (installed). Refer to `agents.md` for deep dives on agents and builds.
+Need to troubleshoot? Logs live under `SerrebiTorrent_Data\logs` next to the EXE/script in portable mode (or per-user app data in installed mode). Open `agents.md` if you need technical or build details.
+
 
 
 

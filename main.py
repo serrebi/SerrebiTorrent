@@ -2222,16 +2222,25 @@ class MainFrame(wx.Frame):
             
     def on_remove_data(self, event):
         hashes = self.torrent_list.get_selected_hashes()
-        if hashes and wx.MessageBox(f"Remove {len(hashes)} torrents AND DATA?", "Confirm", wx.YES_NO | wx.ICON_WARNING) == wx.YES:
-            self.statusbar.SetStatusText("Removing torrents and data...", 0)
-            self.thread_pool.submit(self._remove_background, hashes, True)
+        if not hashes:
+            return
+        count = len(hashes)
+        label = 'torrent' if count == 1 else 'torrents'
+        if wx.MessageBox(f"Remove {count} {label} AND DATA?", "Confirm", wx.YES_NO | wx.ICON_WARNING) != wx.YES:
+            return
+        self.statusbar.SetStatusText("Removing torrents and data...", 0)
+        self.thread_pool.submit(self._remove_background, hashes, True)
 
     def _remove_background(self, hashes, with_data):
         try:
-            for h in hashes:
-                if with_data:
-                    self.client.remove_torrent_with_data(h)
-                else:
+            if hasattr(self.client, 'remove_torrents'):
+                self.client.remove_torrents(hashes, delete_files=with_data)
+            else:
+                for h in hashes:
+                    if with_data:
+                        self.client.remove_torrent_with_data(h)
+                    else:
+                        self.client.remove_torrent(h)
                     self.client.remove_torrent(h)
             wx.CallAfter(self._on_action_complete, "Removed torrents")
         except Exception as e:
