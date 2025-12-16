@@ -1143,37 +1143,56 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
 
     def CreatePopupMenu(self):
         menu = wx.Menu()
-        restore = menu.Append(wx.ID_ANY, "Restore")
-        self.Bind(wx.EVT_MENU, self.on_restore, restore)
 
-        menu.AppendSeparator()
-        start_item = menu.Append(wx.ID_ANY, "Start")
-        stop_item = menu.Append(wx.ID_ANY, "Stop")
-        pause_item = menu.Append(wx.ID_ANY, "Pause")
-        resume_item = menu.Append(wx.ID_ANY, "Resume")
-        self.Bind(wx.EVT_MENU, self.on_start, start_item)
-        self.Bind(wx.EVT_MENU, self.on_pause, pause_item)
-        self.Bind(wx.EVT_MENU, self.on_resume, resume_item)
-        self.Bind(wx.EVT_MENU, self.on_recheck, recheck_item)
-        self.Bind(wx.EVT_MENU, self.on_reannounce, reannounce_item)
-        self.Bind(wx.EVT_MENU, self.on_copy_info_hash, copy_hash_item)
-        self.Bind(wx.EVT_MENU, self.on_copy_magnet, copy_magnet_item)
-        self.Bind(wx.EVT_MENU, self.on_open_download_folder, open_folder_item)
-        self.Bind(wx.EVT_MENU, self.on_pause, pause_item)
-        self.Bind(wx.EVT_MENU, self.on_resume, resume_item)
+        start_all_item = menu.Append(wx.ID_ANY, "Start All")
+        stop_all_item = menu.Append(wx.ID_ANY, "Stop All")
+        self.Bind(wx.EVT_MENU, self.on_start_all, start_all_item)
+        self.Bind(wx.EVT_MENU, self.on_stop_all, stop_all_item)
 
-        menu.AppendSeparator()
-        profile_menu = wx.Menu()
-        profiles = self.frame.config_manager.get_profiles()
+        # Switch Profile submenu (mirrors File -> Connect)
+        switch_menu = wx.Menu()
+        try:
+            profiles = self.frame.config_manager.get_profiles() or {}
+        except Exception:
+            profiles = {}
+
+        try:
+            default_id = self.frame.config_manager.get_default_profile_id()
+        except Exception:
+            default_id = None
+
+        current_id = getattr(self.frame, "current_profile_id", None)
+
         if profiles:
-            for pid, profile in profiles.items():
-                label = profile.get("name") or pid
-                item = profile_menu.Append(wx.ID_ANY, label)
-                self.Bind(wx.EVT_MENU, lambda event, pid=pid: self.on_switch_profile(pid), item)
-        else:
-            empty = profile_menu.Append(wx.ID_ANY, "No Profiles Configured")
-            empty.Enable(False)
-        menu.AppendSubMenu(profile_menu, "Switch Profile")
+            def _sort_key(kv):
+                pid, p = kv
+                return str(p.get("name", pid)).lower()
+
+            for pid, p in sorted(profiles.items(), key=_sort_key):
+                label = str(p.get("name") or pid)
+                if default_id and pid == default_id:
+                    label += " (Default)"
+                if current_id and pid == current_id:
+                    label += " (Current)"
+                item = switch_menu.Append(wx.ID_ANY, label, "Connect to this profile")
+                self.Bind(wx.EVT_MENU, lambda evt, pid=pid: self._on_switch_profile_pid(pid), item)
+
+            switch_menu.AppendSeparator()
+
+        manage_item = switch_menu.Append(wx.ID_ANY, "Connection Manager...", "Add/edit/delete profiles and connect")
+        self.Bind(wx.EVT_MENU, self.on_connection_manager, manage_item)
+
+        menu.AppendSubMenu(switch_menu, "Switch Profile")
+
+        menu.AppendSeparator()
+        try:
+            settings_item = menu.Append(wx.ID_PREFERENCES, "Settings")
+        except Exception:
+            settings_item = menu.Append(wx.ID_ANY, "Settings")
+        self.Bind(wx.EVT_MENU, self.on_settings, settings_item)
+
+        open_item = menu.Append(wx.ID_ANY, f"Open {APP_NAME}")
+        self.Bind(wx.EVT_MENU, self.on_restore, open_item)
 
         menu.AppendSeparator()
         exit_item = menu.Append(wx.ID_EXIT, "Exit")
@@ -1185,6 +1204,16 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
 
     def on_restore(self, event):
         self.frame.show_from_tray()
+
+    def _on_switch_profile_pid(self, profile_id):
+        # Restore the UI first so screen readers land correctly, then connect.
+        wx.CallAfter(self.frame.show_from_tray)
+        wx.CallAfter(self.frame.connect_profile, profile_id)
+
+    def on_connection_manager(self, event):
+        wx.CallAfter(self.frame.show_from_tray)
+        wx.CallAfter(self.frame.on_connect, None)
+
 
     def on_start(self, event):
         wx.CallAfter(self.frame.on_start, None)
@@ -1200,6 +1229,15 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
 
     def on_switch_profile(self, profile_id):
         wx.CallAfter(self.frame.connect_profile, profile_id)
+    def on_start_all(self, event):
+        wx.CallAfter(self.frame.start_all_torrents)
+
+    def on_stop_all(self, event):
+        wx.CallAfter(self.frame.stop_all_torrents)
+
+    def on_settings(self, event):
+        wx.CallAfter(self.frame.on_prefs, None)
+
 
     def on_exit(self, event):
         self.frame.force_close()
@@ -1978,6 +2016,75 @@ class MainFrame(wx.Frame):
             wx.CallAfter(self._on_action_complete, f"{label} complete")
         except Exception as e:
             wx.CallAfter(self._on_action_error, f"Failed to {label.lower()} torrent: {e}")
+
+    def _get_all_hashes(self):
+        hashes = []
+        try:
+            torrents = self.all_torrents if hasattr(self, 'all_torrents') and self.all_torrents else []
+            for t in torrents:
+                if isinstance(t, dict):
+                    h = t.get('hash')
+                else:
+                    h = None
+                if h:
+                    hashes.append(str(h))
+        except Exception:
+            pass
+        # De-duplicate but keep order
+        seen = set()
+        out = []
+        for h in hashes:
+            if h in seen:
+                continue
+            seen.add(h)
+            out.append(h)
+        return out
+
+    def _apply_background_bulk(self, action, hashes, label):
+        failed = 0
+        last_error = None
+        try:
+            for h in hashes:
+                try:
+                    action(h)
+                except Exception as e:
+                    failed += 1
+                    last_error = e
+            if failed == 0:
+                wx.CallAfter(self._on_action_complete, f"{label} complete")
+            else:
+                wx.CallAfter(self.statusbar.SetStatusText, f"{label} complete ({failed} failed). Last error: {last_error}", 0)
+                wx.CallAfter(self.refresh_data)
+        except Exception as e:
+            wx.CallAfter(self._on_action_error, f"Failed to {label.lower()}: {e}")
+
+    def start_all_torrents(self):
+        if not self.client or not hasattr(self.client, 'start_torrent'):
+            if hasattr(self, 'statusbar'):
+                self.statusbar.SetStatusText('Not connected to any client.', 0)
+            return
+        hashes = self._get_all_hashes()
+        if not hashes:
+            if hasattr(self, 'statusbar'):
+                self.statusbar.SetStatusText('No torrents to start.', 0)
+            return
+        if hasattr(self, 'statusbar'):
+            self.statusbar.SetStatusText('Starting all torrents...', 0)
+        self.thread_pool.submit(self._apply_background_bulk, self.client.start_torrent, hashes, 'Start all')
+
+    def stop_all_torrents(self):
+        if not self.client or not hasattr(self.client, 'stop_torrent'):
+            if hasattr(self, 'statusbar'):
+                self.statusbar.SetStatusText('Not connected to any client.', 0)
+            return
+        hashes = self._get_all_hashes()
+        if not hashes:
+            if hasattr(self, 'statusbar'):
+                self.statusbar.SetStatusText('No torrents to stop.', 0)
+            return
+        if hasattr(self, 'statusbar'):
+            self.statusbar.SetStatusText('Stopping all torrents...', 0)
+        self.thread_pool.submit(self._apply_background_bulk, self.client.stop_torrent, hashes, 'Stop all')
 
     def on_start(self, event):
         action = self.client.start_torrent if self.client else None
