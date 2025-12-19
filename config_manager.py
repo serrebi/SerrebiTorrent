@@ -46,6 +46,11 @@ DEFAULT_PREFERENCES: Dict[str, Any] = {
     "close_to_tray": True,
     "enable_trackers": True,
     "tracker_url": "https://raw.githubusercontent.com/scriptzteam/BitTorrent-Tracker-List/refs/heads/main/trackers_best.txt",
+    "rss_update_interval": 300,  # Default 5 minutes
+    "web_ui_enabled": False,
+    "web_ui_port": 8080,
+    "web_ui_user": "admin",
+    "web_ui_pass": "password",
     # 0=None, 1=SOCKS4, 2=SOCKS5, 3=HTTP
     "proxy_type": 0,
     "proxy_host": "",
@@ -82,15 +87,17 @@ class ConfigManager:
         return cfg
 
     def load_config(self) -> Dict[str, Any]:
+        cfg = None
+        
         # Prefer the new path.
         if os.path.exists(CONFIG_FILE):
             try:
-                return self._normalize(_read_json(CONFIG_FILE))
+                cfg = self._normalize(_read_json(CONFIG_FILE))
             except Exception:
-                return DEFAULT_CONFIG.copy()
+                cfg = None # Fallback
 
-        # Migrate legacy config.json if present.
-        if os.path.exists(LEGACY_CONFIG_FILE):
+        # Migrate legacy config.json if present and no new config
+        if not cfg and os.path.exists(LEGACY_CONFIG_FILE):
             try:
                 cfg = self._normalize(_read_json(LEGACY_CONFIG_FILE))
                 # Save to the new location. Keep the legacy file untouched.
@@ -98,16 +105,41 @@ class ConfigManager:
                     _write_json(CONFIG_FILE, cfg)
                 except Exception:
                     pass
-                return cfg
             except Exception:
-                return DEFAULT_CONFIG.copy()
+                cfg = None
 
-        # First run: create a default config.
-        cfg = DEFAULT_CONFIG.copy()
-        try:
-            _write_json(CONFIG_FILE, cfg)
-        except Exception:
-            pass
+        # First run or fallback: create a default config.
+        if not cfg:
+            cfg = DEFAULT_CONFIG.copy()
+            # Ensure fresh copy of prefs
+            cfg["preferences"] = DEFAULT_PREFERENCES.copy()
+        
+        # Ensure a default Local profile exists if list is empty
+        profiles = cfg.get("profiles", {})
+        if not profiles:
+            import uuid
+            pid = str(uuid.uuid4())
+            dl_path = cfg["preferences"].get("download_path", "")
+            if not dl_path:
+                dl_path = os.path.join(os.path.expanduser("~"), "Downloads")
+                
+            cfg["profiles"] = {
+                pid: {
+                    "name": "Local",
+                    "type": "local",
+                    "url": dl_path,
+                    "user": "",
+                    "password": ""
+                }
+            }
+            cfg["default_profile"] = pid
+            
+            # Save immediately if it was a fresh creation
+            try:
+                _write_json(CONFIG_FILE, cfg)
+            except Exception:
+                pass
+
         return cfg
 
     def save_config(self) -> None:

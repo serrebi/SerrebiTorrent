@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SerrebiTorrent - Web</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <a class="visually-hidden-focusable p-3" href="#torrentTable">Skip to torrent list</a>
+
+    <div class="app-container">
+        <!-- Top Toolbar (uTorrent Style) -->
+        <header class="navbar navbar-light sticky-top shadow-sm" role="banner">
+            <div class="d-flex align-items-center w-100">
+                <a class="navbar-brand px-2" href="#">SerrebiTorrent</a>
+                
+                <div class="btn-group border-end pe-2 me-2">
+                    <button class="btn btn-sm" data-bs-toggle="modal" data-bs-target="#addTorrentModal" title="Add Torrent">
+                        <span aria-hidden="true">&#x1F4C1;</span> Add
+                    </button>
+                    <button class="btn btn-sm" onclick="refreshData()" title="Refresh">
+                        <span aria-hidden="true">&#x21BB;</span>
+                    </button>
+                </div>
+
+                <div class="btn-group border-end pe-2 me-2">
+                    <button class="btn btn-sm" onclick="doAction('resume')" title="Start">
+                        <span aria-hidden="true" style="color: green;">&#x25B6;</span>
+                    </button>
+                    <button class="btn btn-sm" onclick="doAction('pause')" title="Pause">
+                        <span aria-hidden="true" style="color: blue;">&#x23F8;</span>
+                    </button>
+                    <button class="btn btn-sm" onclick="doAction('delete')" title="Remove">
+                        <span aria-hidden="true" style="color: red;">&#x2716;</span>
+                    </button>
+                </div>
+
+                <div class="ms-auto d-flex align-items-center">
+                    <button class="btn btn-sm me-2" data-bs-toggle="modal" data-bs-target="#settingsModal">Settings</button>
+                    <button class="btn btn-sm" onclick="logout()">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="container-fluid content-row">
+            <div class="row h-100">
+                <!-- Tab Order Fix: Sidebar is placed BEFORE Main Content so Shift-Tab works as requested -->
+                
+                <!-- Left Sidebar: Navigation (Tab 1) -->
+                <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse overflow-auto" aria-label="Navigation">
+                    <div class="position-sticky pt-2 sidebar-sticky" id="sidebarNav" role="grid" aria-label="Navigation Sidebar">
+                        <h2 class="sidebar-heading px-3 mt-2 mb-1 text-muted text-uppercase fs-6 d-flex justify-content-between">
+                            <span>PROFILES</span>
+                            <button class="btn btn-sm btn-link p-0 text-decoration-none" data-bs-toggle="modal" data-bs-target="#addProfileModal" title="Add Profile">+</button>
+                        </h2>
+                        <div id="profileList" role="rowgroup"></div>
+
+                        <h2 class="sidebar-heading px-3 mt-4 mb-1 text-muted text-uppercase fs-6">Status</h2>
+                        <div id="filterList" role="rowgroup">
+                            <div role="row"><a href="#" class="sidebar-link active" data-filter="All" onclick="setFilter('All', event)" role="gridcell" tabindex="0">All</a></div>
+                            <div role="row"><a href="#" class="sidebar-link" data-filter="Downloading" onclick="setFilter('Downloading', event)" role="gridcell" tabindex="-1">Downloading</a></div>
+                            <div role="row"><a href="#" class="sidebar-link" data-filter="Seeding" onclick="setFilter('Seeding', event)" role="gridcell" tabindex="-1">Seeding</a></div>
+                            <div role="row"><a href="#" class="sidebar-link" data-filter="Finished" onclick="setFilter('Finished', event)" role="gridcell" tabindex="-1">Finished</a></div>
+                            <div role="row"><a href="#" class="sidebar-link" data-filter="Stopped" onclick="setFilter('Stopped', event)" role="gridcell" tabindex="-1">Stopped</a></div>
+                            <div role="row"><a href="#" class="sidebar-link" data-filter="Failed" onclick="setFilter('Failed', event)" role="gridcell" tabindex="-1">Failed</a></div>
+                            <div role="row"><a href="#" class="sidebar-link" data-filter="RSS" onclick="setFilter('RSS', event)" role="gridcell" tabindex="-1">RSS Downloader</a></div>
+                        </div>
+
+                        <h2 class="sidebar-heading px-3 mt-4 mb-1 text-muted text-uppercase fs-6">Trackers</h2>
+                        <div id="trackerList" role="rowgroup">
+                            <!-- Trackers -->
+                        </div>
+                    </div>
+                </nav>
+
+                <!-- Main Content Pane (Tab 2) -->
+                <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 main-pane" role="main">
+                    <!-- Top: Torrent List -->
+                    <section class="torrent-list-container">
+                        <div class="torrent-list-header px-3 py-1">
+                            <h2 class="fs-6 fw-bold mb-0">Torrents</h2>
+                        </div>
+                        <div class="table-responsive h-100" id="tableScrollContainer" style="position: relative;">
+                            <div id="tableStretcher" style="position: absolute; top: 0; left: 0; width: 1px; visibility: hidden;"></div>
+                            <table class="table table-sm" id="torrentTable" role="grid" aria-readonly="true" aria-label="torrents" style="position: sticky; top: 0;">
+                                <thead role="rowgroup">
+                                    <tr role="row">
+                                        <th scope="col" style="width: 40px;" role="columnheader"></th>
+                                        <th scope="col" role="columnheader">Name</th>
+                                        <th scope="col" role="columnheader">Size</th>
+                                        <th scope="col" role="columnheader">Status</th>
+                                        <th scope="col" role="columnheader">Progress</th>
+                                        <th scope="col" role="columnheader">Speed</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="torrentTableBody" role="rowgroup">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <!-- Bottom: Details Panel -->
+                    <section class="details-pane shadow-sm border-top" aria-label="Torrent Details">
+                        <ul class="nav nav-tabs" id="detailTabs" role="tablist">
+                            <li class="nav-item">
+                                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#details-general" type="button">General</button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="files-tab" data-bs-toggle="tab" data-bs-target="#details-files" type="button">Files</button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="peers-tab" data-bs-toggle="tab" data-bs-target="#details-peers" type="button">Peers</button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link" id="trackers-tab" data-bs-toggle="tab" data-bs-target="#details-trackers" type="button">Trackers</button>
+                            </li>
+                        </ul>
+                        <div class="tab-content h-100 overflow-auto" id="detailTabsContent">
+                            <div class="tab-pane fade show active p-3" id="details-general" role="tabpanel">
+                                <p>Select a torrent.</p>
+                            </div>
+                            <div class="tab-pane fade p-3" id="details-files" role="tabpanel"></div>
+                            <div class="tab-pane fade p-3" id="details-peers" role="tabpanel"></div>
+                            <div class="tab-pane fade p-3" id="details-trackers" role="tabpanel"></div>
+                        </div>
+                    </section>
+
+                    <!-- Footer Actions (Tab 3) -->
+                    <div class="footer-actions d-flex align-items-center">
+                        <button class="btn btn-sm btn-primary me-2" id="torrentActionsBtn" onclick="showActionsMenu(event)">Torrent Actions</button>
+                        <button class="btn btn-sm btn-outline-secondary me-3" id="selectAllBtn" onclick="toggleSelectAllBtn()">Select All</button>
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="selectAllCheck">
+                            <label class="form-check-label small" for="selectAllCheck">Select All</label>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="contextMenu" class="dropdown-menu shadow" style="display:none; position: absolute; z-index: 2000;" role="menu" aria-label="Torrent actions">
+        <button class="dropdown-item" role="menuitem" onclick="doAction('resume')">Start</button>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('pause')">Pause</button>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('resume')">Resume</button>
+        <div class="dropdown-divider" role="separator"></div>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('recheck')">Force Recheck</button>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('reannounce')">Force Reannounce</button>
+        <div class="dropdown-divider" role="separator"></div>
+        <button class="dropdown-item" role="menuitem" onclick="copyToClipboard('hash')">Copy Info Hash</button>
+        <button class="dropdown-item" role="menuitem" onclick="copyToClipboard('magnet')">Copy Magnet Link</button>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('openfolder')">Open Download Folder</button>
+        <div class="dropdown-divider" role="separator"></div>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('delete')">Remove</button>
+        <button class="dropdown-item" role="menuitem" onclick="doAction('delete', true)">Remove with Data</button>
+    </div>
+
+    <!-- Add Profile Modal -->
+    <div class="modal fade" id="addProfileModal" tabindex="-1" aria-labelledby="addProfileModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addProfileModalLabel">Add Connection Profile</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addProfileForm">
+                        <div class="mb-3">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-control" id="profName" placeholder="My Remote Server" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Type</label>
+                            <select class="form-select" id="profType">
+                                <option value="local">Local libtorrent</option>
+                                <option value="rtorrent" selected>rTorrent</option>
+                                <option value="qbittorrent">qBittorrent</option>
+                                <option value="transmission">Transmission</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">URL / Path</label>
+                            <input type="text" class="form-control" id="profUrl" placeholder="http://1.2.3.4:8080" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Username</label>
+                            <input type="text" class="form-control" id="profUser">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Password</label>
+                            <input type="password" class="form-control" id="profPass">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Create Profile</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Torrent Modal -->
+    <div class="modal fade" id="addTorrentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add Torrent</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addTorrentForm">
+                        <div class="mb-3">
+                            <label class="form-label">URLs / Magnets (one per line)</label>
+                            <textarea class="form-control" id="torrentUrls" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Torrent Files</label>
+                            <input type="file" class="form-control" id="torrentFiles" multiple>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Save Path (Optional)</label>
+                            <input type="text" class="form-control" id="torrentSavePath">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Add</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal fade" id="settingsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Preferences</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <ul class="nav nav-tabs px-3 pt-2" id="settingsTabs" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active" id="app-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-app" type="button">Application</button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" id="remote-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-remote" type="button">Remote Client</button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" id="web-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-web" type="button">Web UI</button>
+                        </li>
+                    </ul>
+                    <div class="tab-content p-4">
+                        <!-- App Settings -->
+                        <div class="tab-pane fade show active" id="settings-app">
+                            <form id="settingsForm">
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">Download Path</label>
+                                        <input type="text" class="form-control" name="download_path">
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">RSS Update Interval (s)</label>
+                                        <input type="number" class="form-control" name="rss_update_interval">
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">Global DL Limit (B/s)</label>
+                                        <input type="number" class="form-control" name="dl_limit">
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label class="form-label">Global UL Limit (B/s)</label>
+                                        <input type="number" class="form-control" name="ul_limit">
+                                    </div>
+                                </div>
+                                <div class="mb-3 form-check">
+                                    <input type="checkbox" class="form-check-input" id="minToTray" name="min_to_tray">
+                                    <label class="form-check-label" for="minToTray">Minimize to Tray</label>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Save App Settings</button>
+                            </form>
+                        </div>
+                        <!-- Remote Settings -->
+                        <div class="tab-pane fade" id="settings-remote">
+                            <form id="remoteSettingsForm">
+                                <div id="remoteSettingsFields" class="row">
+                                    <p class="text-muted">Loading remote settings...</p>
+                                </div>
+                                <hr>
+                                <button type="submit" class="btn btn-primary">Save Remote Settings</button>
+                            </form>
+                        </div>
+                        <!-- Web Settings -->
+                        <div class="tab-pane fade" id="settings-web">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Theme</label>
+                                    <select class="form-select" id="webTheme" onchange="applyTheme(this.value)">
+                                        <option value="light">Light (Classic)</option>
+                                        <option value="dark">Dark (Night)</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">UI Refresh Rate (ms)</label>
+                                    <input type="number" class="form-control" id="webRefreshRate" value="5000" step="500" min="1000">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ARIA Live region for announcements -->
+    <div id="aria-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+:root {
+    --ut-blue: #0056b3;
+    --ut-bg: #fdfdfd;
+    --ut-sidebar-bg: #f0f0f0;
+    --ut-border: #cccccc;
+    --ut-header-bg: #e1e1e1;
+    --ut-selected: #cce8ff;
+    --ut-text: #333333;
+    --ut-green: #2ecc71;
+}
+
+body {
+    font-family: Tahoma, "Segoe UI", Arial, sans-serif;
+    font-size: 12px;
+    color: var(--ut-text);
+    background-color: var(--ut-bg);
+    height: 100vh;
+    overflow: hidden;
+    margin: 0;
+}
+
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* uTorrent Style Top Toolbar */
+.navbar {
+    background: linear-gradient(to bottom, #f9f9f9 0%, #e1e1e1 100%) !important;
+    border-bottom: 1px solid #ababab;
+    padding: 2px 10px;
+    min-height: 40px;
+}
+
+.navbar-brand {
+    color: #444 !important;
+    font-weight: bold;
+    font-size: 14px;
+    margin-right: 20px;
+}
+
+.btn-group .btn {
+    border-radius: 3px;
+    margin: 2px;
+    padding: 4px 10px;
+    font-size: 11px;
+    background: #fff;
+    border: 1px solid #ccc;
+    color: #333;
+}
+
+.btn-group .btn:hover {
+    background: #e1e1e1;
+    border-color: #999;
+}
+
+/* Layout */
+.content-row {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    padding: 0;
+}
+
+/* Sidebar (uTorrent Style) */
+#sidebarMenu {
+    background-color: var(--ut-sidebar-bg) !important;
+    border-right: 1px solid var(--ut-border);
+    width: 200px;
+    flex: none;
+}
+
+.sidebar-heading {
+    background: #d1d1d1;
+    color: #444;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: bold;
+    border-bottom: 1px solid #bbb;
+}
+
+.sidebar-link {
+    padding: 5px 15px 5px 25px;
+    font-size: 12px;
+    color: #333;
+    text-decoration: none;
+    display: block;
+    border-bottom: 1px solid transparent;
+}
+
+.sidebar-link:hover {
+    background-color: #e5e5e5;
+}
+
+.sidebar-link.active {
+    background-color: var(--ut-selected);
+    font-weight: bold;
+    color: #000;
+}
+
+.sidebar-link:focus {
+    outline: 1px dotted #333;
+    background-color: #d1e8ff;
+}
+
+/* Main Content Area */
+.main-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+}
+
+.torrent-list-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.torrent-list-header {
+    background: #f0f0f0;
+    padding: 4px 10px;
+    font-weight: bold;
+    border-bottom: 1px solid var(--ut-border);
+}
+
+/* uTorrent Grid */
+#torrentTable {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#torrentTable thead th {
+    background: linear-gradient(to bottom, #fefefe 0%, #e1e1e1 100%);
+    border-right: 1px solid #ccc;
+    border-bottom: 1px solid #aaa;
+    padding: 5px 8px;
+    font-size: 11px;
+    color: #444;
+    text-align: left;
+    white-space: nowrap;
+}
+
+#torrentTableBody tr {
+    height: 24px;
+}
+
+#torrentTableBody td {
+    padding: 3px 8px;
+    border-right: 1px solid #f0f0f0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 12px;
+}
+
+#torrentTableBody tr.selected {
+    background-color: var(--ut-selected) !important;
+    color: #000;
+}
+
+#torrentTableBody tr:focus {
+    outline: 1px dotted #333;
+    background-color: #e5f3ff;
+}
+
+/* Details Pane (Bottom) */
+.details-pane {
+    height: 30%;
+    min-height: 150px;
+    border-top: 2px solid #999;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+}
+
+.nav-tabs {
+    background: #f0f0f0;
+    border-bottom: 1px solid #ccc;
+}
+
+.nav-tabs .nav-link {
+    padding: 4px 12px;
+    font-size: 11px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    color: #555;
+    margin-right: 2px;
+}
+
+.nav-tabs .nav-link.active {
+    background: #fff;
+    border-color: #ccc;
+    color: #000;
+    position: relative;
+    top: 1px;
+    z-index: 2;
+}
+
+/* Footer (Status Bar) */
+.footer-actions {
+    background: #f0f0f0;
+    border-top: 1px solid #aaa;
+    padding: 2px 10px;
+    font-size: 11px;
+    height: 24px;
+}
+
+.progress {
+    height: 14px;
+    border: 1px solid #999;
+    background: #fff;
+    border-radius: 0;
+}
+
+.progress-bar {
+    background-color: #3498db;
+}
+
+/* Custom classes for uTorrent look */
+.ut-status-icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+    margin-right: 5px;
+}
+
+/* Accessibility remains untouched - styles only enhance visuals for sighted users */

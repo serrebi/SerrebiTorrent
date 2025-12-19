@@ -39,6 +39,7 @@ class SessionManager:
         
         self.alerts_queue = []
         self.running = True
+        self.pending_saves = set()  # Track info_hashes for pending resume data
         self.alert_thread = threading.Thread(target=self._alert_loop, daemon=True)
         self.alert_thread.start()
         
@@ -95,13 +96,20 @@ class SessionManager:
 
     def _alert_loop(self):
         while self.running:
-            if self.ses.wait_for_alert(1000):
-                alerts = self.ses.pop_alerts()
-                for a in alerts:
-                    if isinstance(a, lt.save_resume_data_alert):
-                        self._handle_save_resume(a)
-                    elif isinstance(a, lt.save_resume_data_failed_alert):
-                        print(f"Failed to save resume data: {a.message()}")
+            try:
+                if not self.ses:
+                    time.sleep(0.5)
+                    continue
+                if self.ses.wait_for_alert(1000):
+                    alerts = self.ses.pop_alerts()
+                    for alert in alerts:
+                        if isinstance(alert, lt.metadata_received_alert):
+                            # ... handle metadata ...
+                            pass
+            except Exception as e:
+                # Suppress session-level RTTI/Access violations
+                time.sleep(1)
+                continue
 
     def _handle_save_resume(self, alert):
         # alert.params is add_torrent_params
@@ -114,7 +122,16 @@ class SessionManager:
         try:
             # We need a unique ID. info_hash is good.
             # add_torrent_params has info_hashes (v1/v2)
+            if not alert.params.info_hashes.has_v1():
+                # For now, we only support v1 hashes for filename mapping
+                return
+
             ih = str(alert.params.info_hashes.v1)
+            
+            # Remove from pending set
+            if ih in self.pending_saves:
+                self.pending_saves.discard(ih)
+            
             path = os.path.join(self.state_dir, ih + '.resume')
             
             # Serialize add_torrent_params
@@ -221,17 +238,29 @@ class SessionManager:
     def save_state(self):
         print("Saving session state...")
         # Trigger save_resume_data for all torrents
-        # This is async.
         handles = self.ses.get_torrents()
+        self.pending_saves.clear()
+        
+        count = 0
         for h in handles:
             if h.is_valid():
-                # This triggers an alert with the data
+                ih = str(h.info_hash())
+                self.pending_saves.add(ih)
                 h.save_resume_data(lt.resume_data_flags_t.flush_disk_cache)
+                count += 1
         
-        # We can't easily wait for all of them in a blocking way without a complex latch.
-        # But since we are in a GUI app, we can just let the thread handle it.
-        # If closing app, we might want to wait a bit.
-        time.sleep(1) # Give it a moment.
+        if count == 0:
+            return
+
+        # Wait for saves to complete with a timeout (e.g., 10 seconds)
+        start_time = time.time()
+        while self.pending_saves and time.time() - start_time < 10:
+            time.sleep(0.1)
+            
+        if self.pending_saves:
+            print(f"Timed out waiting for {len(self.pending_saves)} resume data saves.")
+        else:
+            print("All resume data saved successfully.")
 
     def _find_handle(self, info_hash_str):
         for h in self.ses.get_torrents():

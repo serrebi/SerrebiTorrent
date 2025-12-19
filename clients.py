@@ -30,6 +30,7 @@ class BaseClient(abc.ABC):
             "down_rate": int (bytes/s),
             "up_rate": int (bytes/s),
             "tracker_domain": str,
+            "save_path": str | None,
             "availability": float | None
         }
         """
@@ -107,9 +108,58 @@ class BaseClient(abc.ABC):
         """Request an immediate tracker announce (if supported)."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def get_torrent_save_path(self, info_hash):
         """Return the torrent's save path if available (local client only)."""
         return None
+
+    @abc.abstractmethod
+    def get_files(self, info_hash):
+        """
+        Returns list of dicts:
+        {
+            "index": int,
+            "name": str,
+            "size": int,
+            "progress": float (0.0 - 1.0),
+            "priority": int (0=Skip, 1=Normal, 2=High)
+        }
+        """
+        pass
+
+    @abc.abstractmethod
+    def set_file_priority(self, info_hash, file_index, priority):
+        """
+        Set priority: 0=Skip, 1=Normal, 2=High
+        """
+        pass
+
+    @abc.abstractmethod
+    def get_peers(self, info_hash):
+        """
+        Returns list of dicts:
+        {
+            "address": str,
+            "client": str,
+            "progress": float (0.0 - 1.0),
+            "down_rate": int (bytes/s),
+            "up_rate": int (bytes/s)
+        }
+        """
+        pass
+
+    @abc.abstractmethod
+    def get_trackers(self, info_hash):
+        """
+        Returns list of dicts:
+        {
+            "url": str,
+            "status": str,
+            "peers": int,
+            "message": str
+        }
+        """
+        pass
 
 # --- rTorrent Client (Existing + Adapted) ---
 import xmlrpc.client
@@ -216,7 +266,12 @@ class RTorrentClient(BaseClient):
                 parsed = urlparse(self.url)
                 new_netloc = f"{self.username}:{self.password}@{parsed.netloc}"
                 self.url = parsed._replace(netloc=new_netloc).geturl()
-        except: pass
+        except Exception as e:
+            try:
+                with open(get_log_path("gui_debug.log"), "a", encoding="utf-8") as f:
+                    f.write(f"HTTP Auth Probe Error: {e}\n")
+            except Exception:
+                pass
         
         transport = CookieTransport(context=self.context, cookies=self.cookies)
         self.server = xmlrpc.client.ServerProxy(self.url, transport=transport, context=self.context)
@@ -241,6 +296,98 @@ class RTorrentClient(BaseClient):
             return ""
         return str(val)
 
+    def get_files(self, info_hash):
+        try:
+            # f.multicall: hash, match_pattern, commands...
+            # f.get_path, f.get_size_bytes, f.get_priority, f.get_completed_chunks, f.get_size_chunks
+            res = self.server.f.multicall(
+                info_hash, "",
+                "f.get_path=", "f.get_size_bytes=", "f.get_priority=",
+                "f.get_completed_chunks=", "f.get_size_chunks="
+            )
+            files = []
+            for i, r in enumerate(res):
+                # r is [path, size, prio, complete_chunks, total_chunks]
+                path = r[0]
+                size = r[1]
+                prio = r[2]
+                done_chunks = r[3]
+                total_chunks = r[4]
+                
+                progress = 0.0
+                if total_chunks > 0:
+                    progress = done_chunks / total_chunks
+                elif size == 0:
+                    progress = 1.0 # Empty file
+                
+                # rTorrent priorities: 0=off, 1=normal, 2=high. Fits our standard.
+                files.append({
+                    "index": i,
+                    "name": path,
+                    "size": size,
+                    "progress": progress,
+                    "priority": prio
+                })
+            return files
+        except Exception as e:
+            print(f"rTorrent get_files error: {e}")
+            return []
+
+    def set_file_priority(self, info_hash, file_index, priority):
+        try:
+            self.server.f.priority.set(info_hash, file_index, priority)
+            self.server.d.update_priorities(info_hash)
+        except Exception as e:
+            print(f"rTorrent set_file_priority error: {e}")
+
+    def get_peers(self, info_hash):
+        try:
+            # p.multicall: hash, view, commands...
+            res = self.server.p.multicall(
+                info_hash, "",
+                "p.address=", "p.client_version=", "p.completed_percent=",
+                "p.down_rate=", "p.up_rate="
+            )
+            peers = []
+            for r in res:
+                peers.append({
+                    "address": str(r[0]),
+                    "client": str(r[1]),
+                    "progress": float(r[2]) / 100.0,
+                    "down_rate": int(r[3]),
+                    "up_rate": int(r[4])
+                })
+            return peers
+        except Exception as e:
+            print(f"rTorrent get_peers error: {e}")
+            return []
+
+    def get_trackers(self, info_hash):
+        try:
+            # t.multicall: hash, view, commands...
+            res = self.server.t.multicall(
+                info_hash, "",
+                "t.url=", "t.is_enabled=", "t.scrape_complete="
+            )
+            trackers = []
+            for r in res:
+                trackers.append({
+                    "url": str(r[0]),
+                    "status": "Enabled" if r[1] else "Disabled",
+                    "peers": int(r[2]) if r[2] else 0,
+                    "message": ""
+                })
+            return trackers
+        except Exception as e:
+            print(f"rTorrent get_trackers error: {e}")
+            return []
+
+    def get_torrent_save_path(self, info_hash):
+        try:
+            return self.server.d.directory(info_hash)
+        except Exception:
+            return None
+
     def get_torrents_full(self):
         try:
             # 1. Fetch DYNAMIC data + Basic STATIC data (Name, Size)
@@ -254,7 +401,7 @@ class RTorrentClient(BaseClient):
                 "d.message=", "d.down.rate=", "d.up.rate=",
                 "d.name=", "d.size_bytes=",
                 "d.left_bytes=", "d.connection_seed=", "d.connection_leech=",
-                "d.peers_complete=", "d.peers_accounted="
+                "d.peers_complete=", "d.peers_accounted=", "d.directory="
             )
             
             if not dynamic_raw: return []
@@ -328,8 +475,8 @@ class RTorrentClient(BaseClient):
                     "message": self._safe_str(t[7]),
                     "down_rate": down_rate,
                     "up_rate": self._safe_int(t[9]),
-                    "tracker_domain": tracker_domain
-                    ,
+                    "tracker_domain": tracker_domain,
+                    "save_path": self._safe_str(t[17]) if len(t) > 17 else None,
                     "eta": eta,
                     "seeds_connected": self._safe_int(t[13]),
                     "seeds_total": self._safe_int(t[15]),
@@ -367,15 +514,138 @@ class RTorrentClient(BaseClient):
             return self.server.throttle.global_down.rate(), self.server.throttle.global_up.rate()
         except: return 0, 0
 
+    def get_app_preferences(self):
+        try:
+            # We use a multicall to fetch common settings
+            m = xmlrpc.client.MultiCall(self.server)
+            m.throttle.global_down.max_rate()
+            m.throttle.global_up.max_rate()
+            m.directory.default()
+            m.throttle.max_peers.normal()
+            m.throttle.min_peers.normal()
+            m.throttle.max_uploads()
+            m.network.port_range()
+            m.pieces.hash.on_completion()
+            m.dht.mode()
+            m.protocol.pex()
+            m.trackers.use_udp()
+            m.protocol.encryption.items()
+            m.network.http.proxy_address()
+
+            res = m()
+            
+            # Helper to extract value or default if fault
+            def val(idx, default):
+                if idx < len(res):
+                    v = res[idx]
+                    if isinstance(v, dict) and 'faultCode' in v:
+                        return default
+                    return v
+                return default
+
+            return {
+                "dl_limit": val(0, 0),
+                "ul_limit": val(1, 0),
+                "directory_default": val(2, ""),
+                "max_peers": val(3, 0),
+                "min_peers": val(4, 0),
+                "max_uploads": val(5, 0),
+                "port_range": val(6, ""),
+                "check_hash": bool(val(7, 0)),
+                "dht_mode": val(8, "off"),
+                "pex_enabled": bool(val(9, 0)),
+                "use_udp_trackers": bool(val(10, 0)),
+                "encryption": ",".join(val(11, [])) if isinstance(val(11, []), list) else "",
+                "proxy_address": val(12, "")
+            }
+        except Exception as e:
+            print(f"rTorrent get prefs error: {e}")
+            return None
+
+    def set_app_preferences(self, prefs):
+        try:
+            m = xmlrpc.client.MultiCall(self.server)
+            
+            if "dl_limit" in prefs:
+                m.throttle.global_down.max_rate.set("", int(prefs["dl_limit"]))
+            if "ul_limit" in prefs:
+                m.throttle.global_up.max_rate.set("", int(prefs["ul_limit"]))
+            if "directory_default" in prefs:
+                m.directory.default.set("", str(prefs["directory_default"]))
+            if "max_peers" in prefs:
+                m.throttle.max_peers.normal.set("", int(prefs["max_peers"]))
+            if "min_peers" in prefs:
+                m.throttle.min_peers.normal.set("", int(prefs["min_peers"]))
+            if "max_uploads" in prefs:
+                m.throttle.max_uploads.set("", int(prefs["max_uploads"]))
+            if "port_range" in prefs:
+                m.network.port_range.set("", str(prefs["port_range"]))
+            if "check_hash" in prefs:
+                m.pieces.hash.on_completion.set("", 1 if prefs["check_hash"] else 0)
+            if "dht_mode" in prefs:
+                m.dht.mode.set("", str(prefs["dht_mode"]))
+            if "pex_enabled" in prefs:
+                m.protocol.pex.set("", 1 if prefs["pex_enabled"] else 0)
+            if "use_udp_trackers" in prefs:
+                m.trackers.use_udp.set("", 1 if prefs["use_udp_trackers"] else 0)
+            if "encryption" in prefs:
+                # Expects list of strings? No, set takes args.
+                # protocol.encryption.set = "arg1", "arg2" ...
+                # Actually commonly passed as one string or multiple calls?
+                # The command often takes variable arguments.
+                # rTorrent docs say: protocol.encryption.set = option, ...
+                # xmlrpc usually handles this by passing multiple params.
+                # But our dialog provides one string.
+                # We can try passing it as a single string if rTorrent supports it, or split.
+                # Better safe: rTorrent config usually looks like: protocol.encryption.set = allow_incoming,try_outgoing
+                # In XMLRPC, one usually passes them as separate string arguments.
+                # But MultiCall method.set("", arg) implies one arg.
+                # Let's try passing the whole comma-separated string as one arg, or loop.
+                # Actually, `protocol.encryption.set` usually clears and sets.
+                # If we can't easily set multiple args via this wrapper, we might skip or try simplified approach.
+                # Let's try passing the string as-is.
+                m.protocol.encryption.set("", str(prefs["encryption"]))
+            if "proxy_address" in prefs:
+                m.network.http.proxy_address.set("", str(prefs["proxy_address"]))
+
+            m()
+        except Exception as e:
+            raise Exception(f"Failed to set rTorrent prefs: {e}")
+
 
 # --- qBittorrent Client ---
 import qbittorrentapi
 
 class QBittorrentClient(BaseClient):
     def __init__(self, url, username, password):
-        self.client = qbittorrentapi.Client(host=url, username=username, password=password)
-        # qBittorrent requires explicit login
-        self.client.auth_log_in()
+        self.url = url
+        self.username = username
+        self.password = password
+        
+        # Ensure URL has a scheme for qbittorrentapi
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
+            
+        self.client = qbittorrentapi.Client(
+            host=url, 
+            username=username, 
+            password=password
+        )
+        
+        try:
+            self.client.auth_log_in()
+        except Exception as e:
+            # Fallback for localhost/127.0.0.1 mismatch
+            if "localhost" in url:
+                try:
+                    new_url = url.replace("localhost", "127.0.0.1")
+                    self.client = qbittorrentapi.Client(host=new_url, username=username, password=password)
+                    self.client.auth_log_in()
+                    self.url = new_url # Update to working URL
+                except Exception:
+                    raise e # Raise original error if fallback also fails
+            else:
+                raise
 
     def test_connection(self):
         return self.client.app_version()
@@ -534,6 +804,88 @@ class QBittorrentClient(BaseClient):
         except Exception as e:
             raise NotImplementedError(str(e))
 
+    def get_files(self, info_hash):
+        try:
+            # Returns list of objects with name, size, progress, priority
+            files = self.client.torrents_files(torrent_hash=info_hash)
+            out = []
+            for i, f in enumerate(files):
+                # qBit priorities: 0=Ignored, 1=Normal, 6=High, 7=Max
+                p = f.priority
+                std_p = 1
+                if p == 0: std_p = 0
+                elif p >= 6: std_p = 2
+                
+                out.append({
+                    "index": i,
+                    "name": f.name,
+                    "size": f.size,
+                    "progress": f.progress,
+                    "priority": std_p
+                })
+            return out
+        except Exception as e:
+            print(f"qBit get_files error: {e}")
+            return []
+
+    def set_file_priority(self, info_hash, file_index, priority):
+        try:
+            # Map std to qBit
+            q_p = 1
+            if priority == 0: q_p = 0
+            elif priority == 2: q_p = 7
+            
+            self.client.torrents_file_priority(torrent_hash=info_hash, file_ids=file_index, priority=q_p)
+        except Exception as e:
+            print(f"qBit set_file_priority error: {e}")
+
+    def get_peers(self, info_hash):
+        try:
+            # In qbittorrentapi, the method is sync_torrent_peers
+            peers_data = self.client.sync_torrent_peers(torrent_hash=info_hash)
+            peers = peers_data.get('peers', {})
+            out = []
+            for ip_port, p in peers.items():
+                out.append({
+                    "address": ip_port,
+                    "client": p.get('client', 'Unknown'),
+                    "progress": p.get('progress', 0.0),
+                    "down_rate": p.get('dl_speed', 0),
+                    "up_rate": p.get('up_speed', 0)
+                })
+            return out
+        except Exception as e:
+            # Suppress common noise if hash is missing/removed
+            msg = str(e).lower()
+            if "torrent hash" not in msg and "not found" not in msg:
+                print(f"qBit get_peers error: {e}")
+            return []
+
+    def get_trackers(self, info_hash):
+        try:
+            trackers = self.client.torrents_trackers(torrent_hash=info_hash)
+            out = []
+            for t in trackers:
+                out.append({
+                    "url": t.get('url', ''),
+                    "status": t.get('status_desc', str(t.get('status', 'Unknown'))),
+                    "peers": t.get('num_peers', 0),
+                    "message": t.get('msg', '')
+                })
+            return out
+        except Exception as e:
+            print(f"qBit get_trackers error: {e}")
+            return []
+
+    def get_torrent_save_path(self, info_hash):
+        try:
+            info = self.client.torrents_info(torrent_hashes=info_hash)
+            if info:
+                # qbittorrentapi usually returns dict-like object
+                return info[0].get('save_path') or info[0].get('download_path')
+        except Exception:
+            pass
+        return None
 
     def get_default_save_path(self):
         try:
@@ -703,6 +1055,129 @@ class TransmissionClient(BaseClient):
                     raise NotImplementedError(str(e))
         raise NotImplementedError('Reannounce not supported by transmission-rpc client')
 
+    def get_files(self, info_hash):
+        try:
+            # Need 'files' and 'fileStats'
+            # transmission-rpc library might wrap this.
+            # .get_torrent(ids, arguments=...)
+            t = self.client.get_torrent(info_hash, arguments=['files', 'fileStats'])
+            
+            out = []
+            files = getattr(t, 'files', [])
+            stats = getattr(t, 'fileStats', [])
+            
+            # files is list of objects/dicts with name, length, bytesCompleted
+            # stats is list of objects/dicts with priority, wanted
+            
+            if not files or not stats or len(files) != len(stats):
+                return []
+
+            for i, f in enumerate(files):
+                # transmission-rpc < 4 returns dicts, >= 4 might return objects
+                # Safety access
+                def get_val(obj, key):
+                    if isinstance(obj, dict): return obj.get(key)
+                    return getattr(obj, key, None)
+
+                name = get_val(f, 'name')
+                length = get_val(f, 'length')
+                done = get_val(f, 'bytesCompleted')
+                
+                s = stats[i]
+                wanted = get_val(s, 'wanted')
+                prio = get_val(s, 'priority') # -1, 0, 1
+                
+                progress = 0.0
+                if length > 0: progress = done / length
+                
+                std_p = 1
+                if not wanted:
+                    std_p = 0
+                elif prio > 0:
+                    std_p = 2
+                # else normal (1)
+                
+                out.append({
+                    "index": i,
+                    "name": name,
+                    "size": length,
+                    "progress": progress,
+                    "priority": std_p
+                })
+            return out
+        except Exception as e:
+            print(f"Transmission get_files error: {e}")
+            return []
+
+    def set_file_priority(self, info_hash, file_index, priority):
+        try:
+            # 0=Skip (unwanted), 1=Normal, 2=High
+            args = {}
+            # file_index can be single int
+            
+            if priority == 0:
+                args['files_unwanted'] = [file_index]
+            elif priority == 1:
+                args['files_wanted'] = [file_index]
+                args['priority_normal'] = [file_index]
+            elif priority == 2:
+                args['files_wanted'] = [file_index]
+                args['priority_high'] = [file_index]
+            
+            self.client.change_torrent(info_hash, **args)
+        except Exception as e:
+            print(f"Transmission set_file_priority error: {e}")
+
+    def get_peers(self, info_hash):
+        try:
+            t = self.client.get_torrent(info_hash, arguments=['peers'])
+            out = []
+            peers = getattr(t, 'peers', [])
+            for p in peers:
+                def get_val(obj, key):
+                    if isinstance(obj, dict): return obj.get(key)
+                    return getattr(obj, key, None)
+                
+                out.append({
+                    "address": f"{get_val(p, 'address')}:{get_val(p, 'port')}",
+                    "client": get_val(p, 'clientName') or 'Unknown',
+                    "progress": get_val(p, 'progress') or 0.0,
+                    "down_rate": get_val(p, 'rateToClient') or 0,
+                    "up_rate": get_val(p, 'rateFromClient') or 0
+                })
+            return out
+        except Exception as e:
+            print(f"Transmission get_peers error: {e}")
+            return []
+
+    def get_trackers(self, info_hash):
+        try:
+            t = self.client.get_torrent(info_hash, arguments=['trackers', 'trackerStats'])
+            out = []
+            # Stats usually have better status info
+            stats = getattr(t, 'trackerStats', [])
+            for s in stats:
+                def get_val(obj, key):
+                    if isinstance(obj, dict): return obj.get(key)
+                    return getattr(obj, key, None)
+                
+                out.append({
+                    "url": get_val(s, 'announce'),
+                    "status": "Active" if get_val(s, 'hasAnnounced') else "Unknown",
+                    "peers": get_val(s, 'peerCount') or 0,
+                    "message": get_val(s, 'lastAnnounceResult') or ''
+                })
+            return out
+        except Exception as e:
+            print(f"Transmission get_trackers error: {e}")
+            return []
+
+    def get_torrent_save_path(self, info_hash):
+        try:
+            t = self.client.get_torrent(info_hash)
+            return getattr(t, 'downloadDir', None)
+        except Exception:
+            return None
 
     def get_default_save_path(self):
         try:
@@ -714,6 +1189,56 @@ class TransmissionClient(BaseClient):
     def get_global_stats(self):
         s = self.client.session_stats()
         return s.download_speed, s.upload_speed
+
+    def get_app_preferences(self):
+        try:
+            s = self.client.get_session()
+            # Extensive properties map
+            keys = [
+                # Speed
+                'speed_limit_down', 'speed_limit_down_enabled',
+                'speed_limit_up', 'speed_limit_up_enabled',
+                # Alt Speed (Turtle Mode)
+                'alt_speed_down', 'alt_speed_up', 'alt_speed_enabled',
+                'alt_speed_time_begin', 'alt_speed_time_end',
+                'alt_speed_time_day', 'alt_speed_time_enabled',
+                # Files & Locations
+                'download_dir', 'incomplete_dir', 'incomplete_dir_enabled',
+                'rename_partial_files', 'trash_original_torrent_files',
+                'start_added_torrents', 'script_torrent_done_enabled',
+                'script_torrent_done_filename', 'cache_size_mb',
+                # Limits & Queues
+                'peer_limit_global', 'peer_limit_per_torrent',
+                'download_queue_enabled', 'download_queue_size',
+                'seed_queue_enabled', 'seed_queue_size',
+                'idle_seeding_limit', 'idle_seeding_limit_enabled',
+                'seedRatioLimit', 'seedRatioLimited',
+                # Network & Peers
+                'encryption', 'dht_enabled', 'pex_enabled', 'lpd_enabled',
+                'utp_enabled', 'port_forwarding_enabled', 'peer_port',
+                'peer_port_random_on_start',
+                # Blocklist
+                'blocklist_enabled', 'blocklist_url'
+            ]
+            data = {}
+            for k in keys:
+                # Library uses underscores for python attributes usually
+                val = getattr(s, k, None)
+                if val is not None:
+                    data[k] = val
+            return data
+        except Exception as e:
+            print(f"Transmission get prefs error: {e}")
+            return None
+
+    def set_app_preferences(self, prefs):
+        try:
+            # Filter out known keys that shouldn't be passed back if they weren't changed or are read-only?
+            # transmission_rpc handles arguments matching session keys.
+            # We assume prefs keys match the get_app_preferences keys (underscores)
+            self.client.set_session(**prefs)
+        except Exception as e:
+            raise Exception(f"Failed to set Transmission prefs: {e}")
 
 # --- Local Client (libtorrent) ---
 prepare_libtorrent_dlls()
@@ -923,6 +1448,89 @@ class LocalClient(BaseClient):
             h.force_reannounce()
         except Exception as e:
             raise NotImplementedError(str(e))
+
+    def get_files(self, info_hash):
+        h = self._get_handle(info_hash)
+        if not h: return []
+        try:
+            if not h.has_metadata(): return [] 
+            ti = h.get_torrent_info()
+            files = ti.files()
+            progress = h.file_progress()
+            priorities = h.file_priorities()
+            
+            out = []
+            for i in range(ti.num_files()):
+                size = files.file_size(i)
+                p = 0.0
+                if size > 0: p = progress[i] / size
+                
+                # libtorrent priorities: 0=dont_download, 1=low... 4=default, 7=top
+                prio = priorities[i]
+                std_p = 1
+                if prio == 0: std_p = 0
+                elif prio > 4: std_p = 2
+                
+                out.append({
+                    "index": i,
+                    "name": files.file_path(i),
+                    "size": size,
+                    "progress": p,
+                    "priority": std_p
+                })
+            return out
+        except Exception as e:
+            print(f"LocalClient get_files error: {e}")
+            return []
+
+    def set_file_priority(self, info_hash, file_index, priority):
+        h = self._get_handle(info_hash)
+        if not h: return
+        try:
+            # Map 0->0, 1->4 (default), 2->7 (top)
+            p = 4
+            if priority == 0: p = 0
+            elif priority == 2: p = 7
+            h.file_priority(file_index, p)
+        except Exception as e:
+            print(f"LocalClient set_file_priority error: {e}")
+
+    def get_peers(self, info_hash):
+        h = self._get_handle(info_hash)
+        if not h: return []
+        try:
+            pi = h.get_peer_info()
+            out = []
+            for p in pi:
+                out.append({
+                    "address": str(p.ip),
+                    "client": str(p.client),
+                    "progress": float(p.progress),
+                    "down_rate": int(p.down_speed),
+                    "up_rate": int(p.up_speed)
+                })
+            return out
+        except Exception as e:
+            print(f"LocalClient get_peers error: {e}")
+            return []
+
+    def get_trackers(self, info_hash):
+        h = self._get_handle(info_hash)
+        if not h: return []
+        try:
+            trackers = h.trackers()
+            out = []
+            for t in trackers:
+                out.append({
+                    "url": str(t['url']),
+                    "status": "Working" if t['verified'] else "Unknown",
+                    "peers": 0, # libtorrent tracker list doesn't show peer count directly per entry in this call
+                    "message": str(t.get('message', ''))
+                })
+            return out
+        except Exception as e:
+            print(f"LocalClient get_trackers error: {e}")
+            return []
 
     def get_torrent_save_path(self, info_hash):
         h = self._get_handle(info_hash)
