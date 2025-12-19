@@ -100,7 +100,7 @@ def torrents_info():
     if not app_ref:
         return jsonify({'torrents': [], 'stats': {}, 'trackers': {}})
     
-    # We re-calculate stats here to ensure they match current filters
+    # Use all_torrents for stats but allow the info call to return what's actually there
     torrents = app_ref.all_torrents
     stats = {"All": 0, "Downloading": 0, "Finished": 0, "Seeding": 0, "Stopped": 0, "Failed": 0}
     tracker_counts = {}
@@ -115,7 +115,6 @@ def torrents_info():
         
         is_seeding = (state == 1 and pct >= 100)
         is_stopped = (state == 0)
-        # Simplified error check for API
         is_error = bool(msg and "success" not in msg.lower() and "ok" not in msg.lower())
         
         stats["All"] += 1
@@ -132,6 +131,17 @@ def torrents_info():
         'stats': stats,
         'trackers': tracker_counts
     })
+
+@app.route('/api/v2/torrents/all')
+@login_required
+def torrents_all():
+    client = WEB_CONFIG['client']
+    if client:
+        try:
+            return jsonify(client.get_torrents_full())
+        except Exception as e:
+            return str(e), 500
+    return jsonify([])
 
 @app.route('/api/v2/torrents/files')
 @login_required

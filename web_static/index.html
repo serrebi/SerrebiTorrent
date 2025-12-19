@@ -84,7 +84,7 @@
                         </div>
                         <div class="table-responsive h-100" id="tableScrollContainer" style="position: relative;">
                             <div id="tableStretcher" style="position: absolute; top: 0; left: 0; width: 1px; visibility: hidden;"></div>
-                            <table class="table table-sm" id="torrentTable" role="grid" aria-readonly="true" aria-label="torrents" style="position: sticky; top: 0;">
+                            <table class="table table-sm" id="torrentTable" role="grid" aria-readonly="true" aria-label="torrents" aria-rowcount="-1" style="position: sticky; top: 0;">
                                 <thead role="rowgroup">
                                     <tr role="row">
                                         <th scope="col" style="width: 40px;" role="columnheader"></th>
@@ -130,7 +130,24 @@
 
                     <!-- Footer Actions (Tab 3) -->
                     <div class="footer-actions d-flex align-items-center">
-                        <button class="btn btn-sm btn-primary me-2" id="torrentActionsBtn" onclick="showActionsMenu(event)">Torrent Actions</button>
+                        <div class="dropup">
+                            <button class="btn btn-sm btn-primary me-2 dropdown-toggle" id="torrentActionsBtn" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Torrent Actions</button>
+                            <ul class="dropdown-menu shadow" id="contextMenu" role="menu" aria-label="Torrent actions">
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Start</button></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('pause')">Pause</button></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Resume</button></li>
+                                <li><hr class="dropdown-divider" role="separator"></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('recheck')">Force Recheck</button></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('reannounce')">Force Reannounce</button></li>
+                                <li><hr class="dropdown-divider" role="separator"></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="copyToClipboard('hash')">Copy Info Hash</button></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="copyToClipboard('magnet')">Copy Magnet Link</button></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('openfolder')">Open Download Folder</button></li>
+                                <li><hr class="dropdown-divider" role="separator"></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('delete')">Remove</button></li>
+                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('delete', true)">Remove with Data</button></li>
+                            </ul>
+                        </div>
                         <button class="btn btn-sm btn-outline-secondary me-3" id="selectAllBtn" onclick="toggleSelectAllBtn()">Select All</button>
                         <div class="form-check">
                             <input type="checkbox" class="form-check-input" id="selectAllCheck">
@@ -140,23 +157,6 @@
                 </main>
             </div>
         </div>
-    </div>
-
-    <!-- Context Menu -->
-    <div id="contextMenu" class="dropdown-menu shadow" style="display:none; position: absolute; z-index: 2000;" role="menu" aria-label="Torrent actions">
-        <button class="dropdown-item" role="menuitem" onclick="doAction('resume')">Start</button>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('pause')">Pause</button>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('resume')">Resume</button>
-        <div class="dropdown-divider" role="separator"></div>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('recheck')">Force Recheck</button>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('reannounce')">Force Reannounce</button>
-        <div class="dropdown-divider" role="separator"></div>
-        <button class="dropdown-item" role="menuitem" onclick="copyToClipboard('hash')">Copy Info Hash</button>
-        <button class="dropdown-item" role="menuitem" onclick="copyToClipboard('magnet')">Copy Magnet Link</button>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('openfolder')">Open Download Folder</button>
-        <div class="dropdown-divider" role="separator"></div>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('delete')">Remove</button>
-        <button class="dropdown-item" role="menuitem" onclick="doAction('delete', true)">Remove with Data</button>
     </div>
 
     <!-- Add Profile Modal -->

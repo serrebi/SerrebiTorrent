@@ -2712,7 +2712,7 @@ class MainFrame(wx.Frame):
                 
                 is_seeding = (state == 1 and pct >= 100)
                 is_stopped = (state == 0)
-                is_error = bool(msg and self.clean_status_message(msg))
+                is_error = bool(msg and clean_status_message(msg))
                 
                 stats["All"] += 1
                 if state == 1 and pct < 100: stats["Downloading"] += 1

@@ -5,6 +5,7 @@ let currentFilter = 'All';
 let currentProfileId = null;
 let lastFocusedHash = null;
 let lastUserActivity = 0;
+let refreshIntervalId = null;
 
 // Virtual Scrolling Config
 const ROW_HEIGHT = 40;
@@ -20,10 +21,12 @@ const els = {
     table: () => document.getElementById('torrentTable'),
     container: () => document.getElementById('tableScrollContainer'),
     contextMenu: () => document.getElementById('contextMenu'),
-    selectAll: () => document.getElementById('selectAllCheck'),
+    selectAllCheck: () => document.getElementById('selectAllCheck'),
     aria: () => document.getElementById('aria-announcer'),
     stretcher: () => document.getElementById('tableStretcher'),
-    sidebarNav: () => document.getElementById('sidebarNav')
+    sidebarNav: () => document.getElementById('sidebarNav'),
+    actionsBtn: () => document.getElementById('torrentActionsBtn'),
+    refreshRateInput: () => document.getElementById('webRefreshRate')
 };
 
 // Initialization
@@ -35,32 +38,92 @@ window.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    refreshData();
+    // Initial fetch
+    refreshData(true);
+    startRefreshLoop();
 
+    // Refresh rate listener
+    const rr = els.refreshRateInput();
+    if (rr) {
+        rr.addEventListener('change', () => {
+            startRefreshLoop();
+        });
+    }
+
+    // Aggressive global context menu suppression for the torrent list area
+    document.addEventListener('contextmenu', (e) => {
+        const tableContainer = els.container();
+        if (tableContainer && tableContainer.contains(e.target)) {
+            e.preventDefault();
+            e.stopPropagation();
+            const row = e.target.closest('tr[data-hash]');
+            showContextMenu(e, row);
+            return false;
+        }
+    }, true);
+ 
     document.addEventListener('mousedown', (e) => {
         lastUserActivity = Date.now();
-        const menu = els.contextMenu();
-        if (menu && menu.style.display === 'block') {
-            if (!menu.contains(e.target) && e.button === 0) {
-                hideContextMenu();
-            }
-        }
     });
 
-    const selectAll = els.selectAll();
-    if (selectAll) {
-        selectAll.onchange = (e) => {
+    const selectAllCheck = els.selectAllCheck();
+    if (selectAllCheck) {
+        selectAllCheck.onchange = (e) => {
             if (e.target.checked) {
                 visibleTorrents.forEach(t => selectedHashes.add(t.hash));
+                announceToSR(`Selected all ${visibleTorrents.length} torrents`);
             } else {
                 selectedHashes.clear();
+                announceToSR("Selection cleared");
             }
             updateSelectionVisuals();
             updateDetailsDebounced();
         };
     }
 
-    // Global Click Handler for Sidebar (Mouse Support)
+    const actionsBtn = els.actionsBtn();
+    if (actionsBtn) {
+        actionsBtn.addEventListener('show.bs.dropdown', (e) => {
+            if (selectedHashes.size === 0) {
+                e.preventDefault();
+                announceToSR("Please select at least one torrent first.", true);
+            } else {
+                lastUserActivity = Date.now();
+                announceToSR("Menu opened", true);
+            }
+        });
+        actionsBtn.addEventListener('hidden.bs.dropdown', () => {
+            announceToSR("Menu closed");
+            if (lastFocusedHash) {
+                setTimeout(() => focusRow(lastFocusedHash, true), 10);
+            }
+        });
+    }
+
+    // Add Torrent Form Handler
+    const addTorrentForm = document.getElementById('addTorrentForm');
+    if (addTorrentForm) {
+        addTorrentForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('urls', document.getElementById('torrentUrls').value);
+            formData.append('savepath', document.getElementById('torrentSavePath').value);
+            const files = document.getElementById('torrentFiles').files;
+            for (let i = 0; i < files.length; i++) {
+                formData.append('torrents', files[i]);
+            }
+            const res = await fetch('/api/v2/torrents/add', { method: 'POST', body: formData });
+            if (res.ok) {
+                const modal = bootstrap.Modal.getInstance(document.getElementById('addTorrentModal'));
+                if (modal) modal.hide();
+                e.target.reset();
+                refreshData(true); 
+            } else {
+                alert("Failed to add torrent: " + await res.text());
+            }
+        };
+    }
+
     document.addEventListener('click', (e) => {
         const link = e.target.closest('.sidebar-link');
         if (!link) return;
@@ -69,17 +132,19 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('keydown', (e) => {
-        const menu = els.contextMenu();
-        const isMenuOpen = menu && menu.style.display === 'block';
-
-        if (isMenuOpen) {
-            handleMenuNavigation(e, menu);
-            return;
+        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {  
+            const activeRow = document.activeElement?.closest ? document.activeElement.closest('tr[data-hash]') : null;
+            const targetRow = activeRow || (lastFocusedHash ? domRows.get(lastFocusedHash) : null);
+            if (targetRow) {
+                e.preventDefault();
+                e.stopPropagation();
+                showContextMenu(e, targetRow);
+            }
+            return false;
         }
 
         if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
 
-        // Check if focus is in sidebar
         const sidebarNav = els.sidebarNav();
         if (sidebarNav && sidebarNav.contains(document.activeElement)) {
             handleSidebarNavigation(e);
@@ -113,32 +178,30 @@ window.addEventListener('DOMContentLoaded', () => {
             visibleTorrents.forEach(t => selectedHashes.add(t.hash));
             updateSelectionVisuals();
             updateDetailsDebounced();
+            announceToSR(`All ${visibleTorrents.length} torrents selected`);
         }
     });
 });
 
-// Sidebar navigation logic (Roving tabindex)
+function startRefreshLoop() {
+    if (refreshIntervalId) clearInterval(refreshIntervalId);
+    let rate = 2000;
+    const input = els.refreshRateInput();
+    if (input && input.value) rate = parseInt(input.value);
+    if (rate < 500) rate = 500;
+    refreshIntervalId = setInterval(() => refreshData(), rate);
+}
+
 function handleSidebarNavigation(e) {
     const links = Array.from(document.querySelectorAll('.sidebar-link'));
     const currentIndex = links.indexOf(document.activeElement);
     let nextIndex = -1;
 
-    if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        nextIndex = (currentIndex + 1) % links.length;
-    } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        nextIndex = (currentIndex - 1 + links.length) % links.length;
-    } else if (e.key === 'Home') {
-        e.preventDefault();
-        nextIndex = 0;
-    } else if (e.key === 'End') {
-        e.preventDefault();
-        nextIndex = links.length - 1;
-    } else if (e.key === 'Enter') {
-        e.preventDefault();
-        activateSidebarLink(document.activeElement, e);
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); nextIndex = (currentIndex + 1) % links.length; }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); nextIndex = (currentIndex - 1 + links.length) % links.length; }
+    else if (e.key === 'Home') { e.preventDefault(); nextIndex = 0; }
+    else if (e.key === 'End') { e.preventDefault(); nextIndex = links.length - 1; }
+    else if (e.key === 'Enter') { e.preventDefault(); activateSidebarLink(document.activeElement, e); }
 
     if (nextIndex !== -1) {
         links.forEach(l => l.tabIndex = -1);
@@ -147,27 +210,32 @@ function handleSidebarNavigation(e) {
     }
 }
 
-async function refreshData() {
-    if (Date.now() - lastUserActivity < 2000) return;
+async function refreshData(force = false) {
+    // If user is actively typing or interacting, skip background refresh unless forced
+    if (!force && Date.now() - lastUserActivity < 1000) return;
+    
     try {
-        const res = await fetch('/api/v2/torrents/info');
-        if (res.status === 403) { window.location.href = '/login.html'; return; }
-        const data = await res.json();
-        
         const isFirstLoad = torrentsMap.size === 0;
-        const torrentsList = data.torrents || [];
+        // Get the full list from the client directly, info only provides MainFrame's filtered list
+        const res = await fetch('/api/v2/torrents/all');
+        if (res.status === 403) { window.location.href = '/login.html'; return; }
+        const torrentsList = await res.json();
         
-        syncTorrentsMap(torrentsList);
+        // Also get stats from info
+        const infoRes = await fetch('/api/v2/torrents/info');
+        const infoData = await infoRes.json();
+        
+        syncTorrentsMap(Array.isArray(torrentsList) ? torrentsList : []);
         updateFilteredList();
         renderVirtualRows();
-        updateSidebarStats(data.stats, data.trackers);
+        updateSidebarStats(infoData.stats, infoData.trackers);
         
         const now = Date.now();
         if (now - lastProfileFetch > 30000) { fetchProfiles(); lastProfileFetch = now; }
 
         if (isFirstLoad && visibleTorrents.length > 0) {
-            // Set focus but NOT selection on load
-            focusRow(visibleTorrents[0].hash, true);
+            // Focus the first torrent on very first load
+            setTimeout(() => focusRow(visibleTorrents[0].hash, true), 100);
         } else if (lastFocusedHash) {
             focusRow(lastFocusedHash, false);
         }
@@ -204,6 +272,9 @@ function updateFilteredList() {
         return false;
     });
     visibleTorrents.sort((a, b) => a.name.localeCompare(b.name));
+    
+    const table = els.table();
+    if (table) table.setAttribute('aria-rowcount', visibleTorrents.length);
     const stretcher = els.stretcher();
     if (stretcher) stretcher.style.height = (visibleTorrents.length * ROW_HEIGHT) + 'px';
 }
@@ -216,20 +287,19 @@ function renderVirtualRows() {
     const endIndex = Math.min(visibleTorrents.length - 1, Math.ceil((container.scrollTop + container.clientHeight) / ROW_HEIGHT) + VIEWPORT_BUFFER);
     const visibleSubList = visibleTorrents.slice(startIndex, endIndex + 1);
     const visibleHashes = new Set(visibleSubList.map(t => t.hash));
-    const allFilteredHashes = new Set(visibleTorrents.map(t => t.hash));
 
     tbody.style.transform = `translateY(${startIndex * ROW_HEIGHT}px)`;
 
     for (const [hash, tr] of domRows.entries()) {
-        if (!visibleHashes.has(hash)) {
-            const isFocusedAndValid = (hash === lastFocusedHash && allFilteredHashes.has(hash));
-            if (!isFocusedAndValid) { tr.remove(); domRows.delete(hash); }
+        if (!visibleHashes.has(hash) && hash !== lastFocusedHash) {
+            tr.remove(); domRows.delete(hash);
         }
     }
     visibleSubList.forEach((t, i) => {
+        const absoluteIndex = startIndex + i;
         let tr = domRows.get(t.hash);
         if (!tr) { tr = createRowElement(t); domRows.set(t.hash, tr); }
-        else { updateRowData(tr, t); }
+        updateRowData(tr, t, absoluteIndex);
         if (tbody.children[i] !== tr) tbody.insertBefore(tr, tbody.children[i] || null);
     });
     updateSelectionVisuals();
@@ -241,29 +311,65 @@ function createRowElement(t) {
     tr.style.height = ROW_HEIGHT + 'px';
     tr.setAttribute('role', 'row');
     tr.tabIndex = -1;
-    tr.onclick = (e) => { if (e.ctrlKey || e.metaKey) toggleSelection(t.hash); else selectByHash(t.hash); };
-    tr.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); if (!selectedHashes.has(t.hash)) selectByHash(t.hash); showContextMenu(e); });
-    updateRowData(tr, t);
+    
+    tr.innerHTML = `
+        <td role="gridcell"><input type="checkbox" class="row-check" tabindex="-1"></td>
+        <td role="gridcell" class="col-name"></td>
+        <td role="gridcell" class="col-size text-nowrap"></td>
+        <td role="gridcell" class="col-status text-nowrap"></td>
+        <td role="gridcell"><div class="progress" aria-hidden="true"><div class="progress-bar"></div></div></td>
+        <td role="gridcell" class="col-speed text-nowrap"></td>
+    `;
+    
+    const check = tr.querySelector('.row-check');
+    check.onclick = (e) => { e.stopPropagation(); toggleSelection(t.hash); };
+
+    tr.onclick = (e) => { 
+        if (e.ctrlKey || e.metaKey) toggleSelection(t.hash); 
+        else selectByHash(t.hash); 
+    };
+    tr.addEventListener('focus', () => { lastFocusedHash = t.hash; });
     return tr;
 }
 
-function updateRowData(tr, t) {
+function updateRowData(tr, t, absIndex) {
     const progress = t.size > 0 ? (t.done / t.size * 100).toFixed(1) : 0;
     const isSelected = selectedHashes.has(t.hash);
-    const ariaLabel = `${t.name}, ${fmtSize(t.size)}, ${t.state === 1 ? (progress >= 100 ? 'Seeding' : 'Downloading') : 'Paused'}, ${progress}% complete, DL: ${fmtSize(t.down_rate)} per second`;
-    if (tr.getAttribute('aria-label') !== ariaLabel) tr.setAttribute('aria-label', ariaLabel);
     const statusText = t.state === 1 ? (progress >= 100 ? 'Seeding' : 'Downloading') : 'Paused';
     const speedText = `DL: ${fmtSize(t.down_rate)}/s`;
-    if (!tr.innerHTML || tr.dataset.lastSnapshot !== `${t.state}|${progress}|${t.down_rate}|${isSelected}`) {
-        tr.innerHTML = `<td role="gridcell" style="width:40px"><input type="checkbox" class="row-check" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelection('${t.hash}')"></td><td role="gridcell" class="col-name" title="${t.name}">${t.name}</td><td role="gridcell" style="width:100px">${fmtSize(t.size)}</td><td role="gridcell" style="width:120px">${statusText}</td><td role="gridcell" style="width:150px"><div class="progress" aria-hidden="true"><div class="progress-bar" style="width: ${progress}%">${progress}%</div></div></td><td role="gridcell" style="width:120px">${speedText}</td>`;
-        tr.dataset.lastSnapshot = `${t.state}|${progress}|${t.down_rate}|${isSelected}`;
-    }
+    
+    tr.setAttribute('aria-rowindex', absIndex + 1);
+    tr.setAttribute('aria-selected', isSelected);
+    
+    const check = tr.querySelector('.row-check');
+    check.checked = isSelected;
+    check.setAttribute('aria-label', `Select ${t.name}`);
+    
+    const nameCell = tr.querySelector('.col-name');
+    if (nameCell.textContent !== t.name) { nameCell.textContent = t.name; nameCell.title = t.name; }
+    
+    const sizeCell = tr.querySelector('.col-size');
+    const sz = fmtSize(t.size);
+    if (sizeCell.textContent !== sz) sizeCell.textContent = sz;
+    
+    const statusCell = tr.querySelector('.col-status');
+    if (statusCell.textContent !== statusText) statusCell.textContent = statusText;
+    
+    const bar = tr.querySelector('.progress-bar');
+    bar.style.width = progress + '%';
+    bar.textContent = progress + '%';
+    
+    const speedCell = tr.querySelector('.col-speed');
+    if (speedCell.textContent !== speedText) speedCell.textContent = speedText;
+
+    tr.classList.toggle('selected', isSelected);
 }
 
 function navigateToIndex(index) {
     if (index < 0 || index >= visibleTorrents.length) return;
     const t = visibleTorrents[index];
-    selectedHashes.clear(); selectedHashes.add(t.hash);
+    selectedHashes.clear();
+    selectedHashes.add(t.hash);
     lastFocusedHash = t.hash;
     scrollToRow(t.hash, index);
     renderVirtualRows();
@@ -272,9 +378,10 @@ function navigateToIndex(index) {
 }
 
 function selectByHash(hash) {
-    selectedHashes.clear(); selectedHashes.add(hash);
+    selectedHashes.clear();
+    selectedHashes.add(hash);
     lastFocusedHash = hash;
-    renderVirtualRows();
+    updateSelectionVisuals();
     focusRow(hash);
     updateDetailsDebounced();
 }
@@ -290,8 +397,8 @@ function toggleSelection(hash) {
 function focusRow(hash, shouldPerformFocus = true) {
     lastFocusedHash = hash;
     const row = domRows.get(hash) || document.querySelector(`tr[data-hash="${hash}"]`);
-    document.querySelectorAll('#torrentTableBody tr').forEach(tr => tr.tabIndex = -1);
     if (row) {
+        document.querySelectorAll('#torrentTableBody tr').forEach(tr => tr.tabIndex = -1);
         row.tabIndex = 0;
         if (shouldPerformFocus && document.activeElement !== row) row.focus();
     }
@@ -309,14 +416,17 @@ function scrollToRow(hash, index) {
 function updateSelectionVisuals() {
     domRows.forEach((tr, hash) => {
         const isSelected = selectedHashes.has(hash);
-        tr.classList.toggle('selected', isSelected);
         tr.setAttribute('aria-selected', isSelected);
+        tr.classList.toggle('selected', isSelected);
         const check = tr.querySelector('.row-check');
         if (check) check.checked = isSelected;
     });
     const allSelected = visibleTorrents.length > 0 && visibleTorrents.every(t => selectedHashes.has(t.hash));
-    const selectAll = els.selectAll();
-    if (selectAll) { selectAll.checked = allSelected; selectAll.indeterminate = !allSelected && selectedHashes.size > 0; }
+    const selectAllCheck = els.selectAllCheck();
+    if (selectAllCheck) { 
+        selectAllCheck.checked = allSelected; 
+        selectAllCheck.indeterminate = !allSelected && selectedHashes.size > 0; 
+    }
 }
 
 function updateSidebarStats(stats, trackers) {
@@ -351,24 +461,12 @@ function setFilter(f, event) {
     selectedHashes.clear();
     lastFocusedHash = null;
     const links = document.querySelectorAll('.sidebar-link');
-    links.forEach(l => {
-        const isMatch = l.dataset.filter === f;
-        l.classList.toggle('active', isMatch);
-        const row = l.closest('[role="row"]');
-        if (row) row.classList.toggle('active', isMatch);
-    });
+    links.forEach(l => l.classList.toggle('active', l.dataset.filter === f));
     updateFilteredList();
-    
-    // Reset scroll to top for new view
     const container = els.container();
     if (container) container.scrollTop = 0;
-    
     renderVirtualRows();
-
-    // Automatically focus the first torrent if available, so Shift-Tab works correctly
-    if (visibleTorrents.length > 0) {
-        focusRow(visibleTorrents[0].hash, true);
-    }
+    if (visibleTorrents.length > 0) focusRow(visibleTorrents[0].hash, true);
 }
 
 async function fetchProfiles() {
@@ -396,7 +494,7 @@ async function switchProfile(id, event) {
     announceToSR("Switching client profile...");
     const fd = new FormData(); fd.append('id', id);
     const res = await fetch('/api/v2/profiles/switch', { method: 'POST', body: fd });
-    if (res.ok) { selectedHashes.clear(); lastFocusedHash = null; lastUserActivity = 0; refreshData(); }
+    if (res.ok) { selectedHashes.clear(); lastFocusedHash = null; lastUserActivity = 0; refreshData(true); }
 }
 
 function updateDetailsDebounced() { if (detailsTimeout) clearTimeout(detailsTimeout); detailsTimeout = setTimeout(updateDetails, 200); }
@@ -404,58 +502,12 @@ function updateDetailsDebounced() { if (detailsTimeout) clearTimeout(detailsTime
 async function updateDetails() {
     const detailPane = document.getElementById('details-general');
     if (selectedHashes.size === 0) { detailPane.innerHTML = '<p>Select a torrent.</p>'; return; }
-    if (selectedHashes.size > 1) { detailPane.innerHTML = `<p>${selectedHashes.size} torrents selected.</p><p class="text-muted small">Right-click to manage selection.</p>`; return; }
+    if (selectedHashes.size > 1) { detailPane.innerHTML = `<p>${selectedHashes.size} torrents selected.</p>`; return; }
     const hash = Array.from(selectedHashes)[0];
     const t = torrentsMap.get(hash);
     if (!t) return;
     detailPane.innerHTML = `<h3 class="fs-5">${t.name}</h3><p>Size: ${fmtSize(t.size)}<br>Hash: ${t.hash}<br>Path: ${t.save_path || 'N/A'}</p>`;
-    const activeTab = document.querySelector('#detailTabs .nav-link.active').id;
-    if (activeTab === 'files-tab') fetchFiles(hash);
-    else if (activeTab === 'peers-tab') fetchPeers(hash);
-    else if (activeTab === 'trackers-tab') fetchTrackers(hash);
 }
-
-async function fetchFiles(hash) {
-    const filesPane = document.getElementById('details-files');
-    try {
-        const res = await fetch(`/api/v2/torrents/files?hash=${hash}`);
-        const files = await res.json();
-        let html = '<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Name</th><th>Size</th><th>Progress</th></tr></thead><tbody>';
-        files.forEach(f => html += `<tr><td>${f.name}</td><td>${fmtSize(f.size)}</td><td>${(f.progress*100).toFixed(1)}%</td></tr>`);
-        html += '</tbody></table></div>'; filesPane.innerHTML = html;
-    } catch (e) {}
-}
-
-async function fetchPeers(hash) {
-    const pane = document.getElementById('details-peers');
-    try {
-        const res = await fetch(`/api/v2/torrents/peers?hash=${hash}`);
-        const peers = await res.json();
-        let html = '<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Address</th><th>Client</th><th>Progress</th><th>Speed</th></tr></thead><tbody>';
-        peers.forEach(p => html += `<tr><td>${p.address}</td><td>${p.client}</td><td>${(p.progress*100).toFixed(1)}%</td><td>${fmtSize(p.down_rate)}/s</td></tr>`);
-        html += '</tbody></table></div>'; pane.innerHTML = html;
-    } catch (e) {}
-}
-
-async function fetchTrackers(hash) {
-    const pane = document.getElementById('details-trackers');
-    try {
-        const res = await fetch(`/api/v2/torrents/trackers?hash=${hash}`);
-        const trackers = await res.json();
-        let html = '<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>URL</th><th>Status</th><th>Peers</th><th>Message</th></tr></thead><tbody>';
-        trackers.forEach(t => html += `<tr><td class="text-truncate" style="max-width:200px" title="${t.url}">${t.url}</td><td>${t.status}</td><td>${t.peers}</td><td class="small">${t.message}</td></tr>`);
-        html += '</tbody></table></div>'; pane.innerHTML = html;
-    } catch (e) {}
-}
-
-document.addEventListener('shown.bs.tab', (e) => {
-    if (selectedHashes.size === 1) {
-        const hash = Array.from(selectedHashes)[0];
-        if (e.target.id === 'peers-tab') fetchPeers(hash);
-        else if (e.target.id === 'trackers-tab') fetchTrackers(hash);
-        else if (e.target.id === 'files-tab') fetchFiles(hash);
-    }
-});
 
 async function doAction(action, deleteFiles = false) {
     if (selectedHashes.size === 0) return;
@@ -463,7 +515,10 @@ async function doAction(action, deleteFiles = false) {
     formData.append('hashes', Array.from(selectedHashes).join('|'));
     if (deleteFiles) formData.append('deleteFiles', 'true');
     const res = await fetch(`/api/v2/torrents/${action}`, { method: 'POST', body: formData });
-    if (res.ok) { hideContextMenu(); refreshData(); }
+    if (res.ok) { 
+        hideContextMenu(); 
+        setTimeout(() => refreshData(true), 100); 
+    }
 }
 
 function fmtSize(bytes) {
@@ -474,119 +529,68 @@ function fmtSize(bytes) {
 }
 
 async function logout() { await fetch('/api/v2/auth/logout', { method: 'POST' }); window.location.href = '/login.html'; }
-function announceToSR(m) { const a = els.aria(); if (a) a.textContent = m; }
+
+function announceToSR(m, assertive = false) {
+    const a = els.aria();
+    if (a) {
+        a.setAttribute('aria-live', assertive ? 'assertive' : 'polite');
+        a.textContent = '';
+        setTimeout(() => { a.textContent = m; }, 50);
+    }
+}
 
 function applyTheme(theme) {
-    if (theme === 'dark') { document.body.classList.add('dark-mode'); localStorage.setItem('web-theme', 'dark'); }
+    if (theme === 'dark') { document.body.classList.add('dark-mode'); localStorage.setItem('web-theme', 'dark'); } 
     else { document.body.classList.remove('dark-mode'); localStorage.setItem('web-theme', 'light'); }
 }
 
-function copyToClipboard(type) {
-    if (selectedHashes.size === 0) return;
-    let text = type === 'hash' ? Array.from(selectedHashes).join('\n') : Array.from(selectedHashes).map(h => `magnet:?xt=urn:btih:${h}`).join('\n');
-    navigator.clipboard.writeText(text); hideContextMenu();
-}
-
-async function renderRSSView() {
-    const pane = document.getElementById('rss-view');
-    pane.innerHTML = `<div class="d-flex justify-content-between align-items-center mb-3"><h2>RSS Downloader</h2><div class="btn-group"><button class="btn btn-sm btn-outline-primary" onclick="refreshRSSData()">Update Feeds</button><button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('flexgetImport').click()">Import FlexGet</button><input type="file" id="flexgetImport" style="display:none" onchange="importFlexGet(this)"></div></div><div class="row"><div class="col-md-4"><div class="card mb-3"><div class="card-header d-flex justify-content-between align-items-center"><span>Feeds</span><button class="btn btn-sm btn-primary" onclick="addRSSFeed()" style="width: 24px; height: 24px; padding: 0;">+</button></div><div class="list-group list-group-flush" id="rssFeedList"></div></div></div><div class="col-md-8"><div class="card mb-3"><div class="card-header d-flex justify-content-between align-items-center"><span>Auto-Download Rules</span><button class="btn btn-sm btn-primary" onclick="addRSSRule()" style="padding: 2px 10px;">Add Rule</button></div><div class="card-body" id="rssRulesList"></div></div></div></div>`;
-    refreshRSSData();
-}
-
-async function refreshRSSData() {
-    const [fRes, rRes] = await Promise.all([fetch('/api/v2/rss/feeds'), fetch('/api/v2/rss/rules')]);
-    const feeds = await fRes.json(); const rules = await rRes.json();
-    const fList = document.getElementById('rssFeedList'); if (!fList) return;
-    fList.innerHTML = '';
-    for (const url in feeds) {
-        const li = document.createElement('div'); li.className = 'list-group-item d-flex justify-content-between align-items-center';
-        li.innerHTML = `<span class="text-truncate">${feeds[url].alias || url}</span><button class="btn btn-sm text-danger" onclick="removeRSSFeed('${url}')">&times;</button>`;
-        fList.appendChild(li);
+function showContextMenu(e, anchorRow = null) {
+    const row = anchorRow || (e?.target && e.target.closest ? e.target.closest('tr[data-hash]') : null);
+    if (row && row.dataset && row.dataset.hash && !selectedHashes.has(row.dataset.hash)) {
+        selectByHash(row.dataset.hash);
     }
-    const rList = document.getElementById('rssRulesList'); rList.innerHTML = '';
-    rules.forEach((r, i) => {
-        const div = document.createElement('div'); div.className = `alert alert-${r.type === 'accept' ? 'success' : 'warning'} py-1 mb-2 d-flex justify-content-between`;
-        div.innerHTML = `<span><strong>${r.type.toUpperCase()}:</strong> <code>${r.pattern}</code></span><button class="btn-close" onclick="removeRSSRule(${i})"></button>`;
-        rList.appendChild(div);
-    });
-}
 
-async function importFlexGet(input) { 
-    if (!input.files.length) return; announceToSR("Importing FlexGet configuration...");
-    const fd = new FormData(); fd.append('config', input.files[0]);
-    try {
-        const res = await fetch('/api/v2/rss/import_flexget', { method: 'POST', body: fd });
-        if (res.ok) { const result = await res.json(); alert(`Successfully imported ${result.feeds} feeds and ${result.rules} rules.`); refreshRSSData(); }
-        else { alert("Import failed: " + await res.text()); }
-    } catch (e) { alert("Error during import: " + e); }
-    input.value = '';
-}
-
-async function addRSSFeed() {
-    const url = prompt("Enter RSS Feed URL:"); if (!url) return;
-    const fd = new FormData(); fd.append('url', url);
-    await fetch('/api/v2/rss/add_feed', { method: 'POST', body: fd }); refreshRSSData();
-}
-
-async function removeRSSFeed(url) {
-    if (confirm("Remove this feed?")) { const fd = new FormData(); fd.append('url', url); await fetch('/api/v2/rss/remove_feed', { method: 'POST', body: fd }); refreshRSSData(); }
-}
-
-async function addRSSRule() {
-    const pattern = prompt("Enter Regex Pattern:"); if (!pattern) return;
-    const type = confirm("Accept? (Cancel for Reject)") ? "accept" : "reject";
-    const fd = new FormData(); fd.append('pattern', pattern); fd.append('type', type);
-    await fetch('/api/v2/rss/set_rule', { method: 'POST', body: fd }); refreshRSSData();
-}
-
-async function removeRSSRule(index) {
-    const fd = new FormData(); fd.append('index', index); await fetch('/api/v2/rss/remove_rule', { method: 'POST', body: fd }); refreshRSSData();
-}
-
-function showActionsMenu(e) {
-    if (selectedHashes.size === 0) {
-        alert("Please select at least one torrent first.");
-        return;
+    const btn = els.actionsBtn();
+    if (btn) {
+        btn.focus();
+        const dd = bootstrap.Dropdown.getOrCreateInstance(btn);
+        dd.show();
     }
-    
-    const btn = document.getElementById('torrentActionsBtn');
-    const rect = btn.getBoundingClientRect();
-    
-    // Simulate a contextmenu event at the button's position
-    const menu = els.contextMenu();
-    menu.style.display = 'block';
-    
-    // Position menu above the button
-    const mHeight = menu.offsetHeight || 350;
-    menu.style.left = rect.left + 'px';
-    menu.style.top = (rect.top - mHeight - 10) + 'px';
-    
-    // Focus first item
-    setTimeout(() => {
-        const first = menu.querySelector('.dropdown-item');
-        if (first) first.focus();
-    }, 50);
+}
+
+function hideContextMenu() { 
+    const btn = els.actionsBtn();
+    if (btn) {
+        const dd = bootstrap.Dropdown.getInstance(btn);
+        if (dd) dd.hide();
+    }
 }
 
 function toggleSelectAllBtn() {
     const isAllSelected = visibleTorrents.length > 0 && visibleTorrents.every(t => selectedHashes.has(t.hash));
     if (isAllSelected) {
         selectedHashes.clear();
+        announceToSR("Selection cleared");
     } else {
         visibleTorrents.forEach(t => selectedHashes.add(t.hash));
+        announceToSR(`Selected all ${visibleTorrents.length} torrents`);
     }
     updateSelectionVisuals();
     updateDetailsDebounced();
 }
 
-function hideContextMenu() { const menu = els.contextMenu(); if (menu) menu.style.display = 'none'; }
-
-function handleMenuNavigation(e, menu) {
-    const items = Array.from(menu.querySelectorAll('[role="menuitem"]:not([disabled])'));
-    const currentIndex = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown') { e.preventDefault(); items[(currentIndex + 1) % items.length].focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(currentIndex - 1 + items.length) % items.length].focus(); }
-    else if (e.key === 'Escape') { hideContextMenu(); if (lastFocusedHash) focusRow(lastFocusedHash); }
+function copyToClipboard(type) {
+    if (selectedHashes.size === 0) return;
+    let text = "";
+    if (type === 'hash') {
+        text = Array.from(selectedHashes).join('\n');
+    } else {
+        text = Array.from(selectedHashes).map(h => `magnet:?xt=urn:btih:${h}`).join('\n');
+    }
+    navigator.clipboard.writeText(text).then(() => {
+        announceToSR("Copied to clipboard");
+    });
+    hideContextMenu();
 }
 
-setInterval(refreshData, 5000);
+setInterval(() => refreshData(), 5000);

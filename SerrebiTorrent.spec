@@ -1,11 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+block_cipher = None
+
+# Ship all OpenSSL 1.1 variants (some envs load the generic name)
+binaries = [
+    ('libcrypto-1_1-x64.dll', '.'),
+    ('libcrypto-1_1.dll', '.'),
+    ('libssl-1_1-x64.dll', '.'),
+    ('libssl-1_1.dll', '.'),
+]
+
+# Bundle the static web UI folder
+datas = [
+    ('web_static', 'web_static'),
+]
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[('libcrypto-1_1-x64.dll', '.'), ('libssl-1_1-x64.dll', '.')],
-    datas=[],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -14,12 +28,14 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-pyz = PYZ(a.pure)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
     name='SerrebiTorrent',

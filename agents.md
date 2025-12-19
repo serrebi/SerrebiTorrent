@@ -25,7 +25,8 @@
 ## Build commands
 - Install deps (only if new environment): `python -m pip install -r requirements.txt` (Store Python, 64‑bit).
 - Build EXE: `pyinstaller SerrebiTorrent.spec`. Output lands in `dist\\SerrebiTorrent.exe`.
-- **Important:** The `.spec` file explicitly includes OpenSSL binaries (`libssl-1_1*.dll`, `libcrypto-1_1*.dll`). Ensure these are present in the root directory before building.
+- `.spec` bundles the web UI: `Tree('web_static', prefix='web_static')` keeps `index.html`, `login.html`, `app.js`, `style.css` alongside the EXE (or `_MEIPASS` in onefile).
+- All OpenSSL 1.1 variants are explicitly added (`libssl-1_1*.dll`, `libcrypto-1_1*.dll`); keep these four DLLs in the repo root before building.
 - Legacy spec filename `rtorrentGUI.spec` still exists for backwards compatibility; it points to the same settings and emits SerrebiTorrent.exe.
 
 ## Packaging
@@ -41,4 +42,3 @@
 - If you must run tests, there are no automated suites. Launch `python main.py` and exercise the UI manually.
 
 Keep edits lean, comment only when code is not self-explanatory, and leave user-facing docs in README.md. Everything technical goes here.
-

@@ -22,6 +22,7 @@ git clone https://github.com/serrebi/SerrebiTorrent
 
 Pip3 install -r ./requirements.txt
 PyInstaller --noconfirm --clean SerrebiTorrent.spec
+The spec already packages the `web_static` folder (web UI) and the OpenSSL 1.1 DLLs; keep those files in the repo root before building.
 The .exe will be in the dist folder.
 ## Accessibility & shortcuts
 Everything stays reachable by keyboard:
@@ -34,7 +35,6 @@ Everything stays reachable by keyboard:
 - Control N will allow you to create a torrent.
 
 Need to troubleshoot? Logs live under `SerrebiTorrent_Data\logs` next to the EXE/script in portable mode (or per-user app data in installed mode). Open `agents.md` if you need technical or build details.
-
 
 
 
