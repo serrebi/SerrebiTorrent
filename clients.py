@@ -191,7 +191,9 @@ class RTorrentClient(BaseClient):
                     "hash": h, "name": self._ss(t[10]), "size": self._si(t[11]), "done": self._si(t[1]), "up_total": self._si(t[2]), "ratio": self._si(t[3]), "state": self._si(t[4]), "active": self._si(t[5]), "hashing": self._si(t[6]), "message": self._ss(t[7]), "down_rate": dr, "up_rate": self._si(t[9]), "tracker_domain": self.tc.get(h, ""), "save_path": self._ss(t[17]) if len(t)>17 else None, "eta": int(lb/dr) if dr>0 and lb>0 else -1, "seeds_connected": self._si(t[13]), "seeds_total": self._si(t[15]), "leechers_connected": self._si(t[14]), "leechers_total": self._si(t[16])
                 })
             return res
-        except: return []
+        except Exception as e:
+            print(f"RTorrent error: {e}")
+            return []
 
     def start_torrent(self, h): self.srv.d.open(h); self.srv.d.start(h)
     def stop_torrent(self, h): self.srv.d.stop(h); self.srv.d.close(h)
@@ -240,7 +242,9 @@ class QBittorrentClient(BaseClient):
                 elif 'checking' in s: hv, sv = 1, 1
                 res.append({"hash": t.hash, "name": t.name, "size": t.total_size, "done": t.completed, "up_total": t.uploaded, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": "", "down_rate": t.dlspeed, "up_rate": t.upspeed, "tracker_domain": urlparse(t.tracker).hostname or "" if t.tracker else "", "eta": int(getattr(t, "eta", -1) or -1), "seeds_connected": int(getattr(t, "num_seeds", 0) or 0), "seeds_total": int(getattr(t, "num_complete", 0) or 0), "leechers_connected": int(getattr(t, "num_leechs", 0) or 0), "leechers_total": int(getattr(t, "num_incomplete", 0) or 0), "availability": getattr(t, "availability", None), "save_path": getattr(t, "save_path", None)})
             return res
-        except: return []
+        except Exception as e:
+            print(f"qBittorrent error: {e}")
+            return []
     def start_torrent(self, h): self.c.torrents_resume(torrent_hashes=h)
     def stop_torrent(self, h): self.c.torrents_pause(torrent_hashes=h)
     def remove_torrent(self, h): self.c.torrents_delete(torrent_hashes=h, delete_files=False)
@@ -280,7 +284,9 @@ class TransmissionClient(BaseClient):
                 else: sv, av = 1, 1
                 res.append({"hash": t.hashString, "name": t.name, "size": t.total_size, "done": t.downloaded_ever, "up_total": t.uploaded_ever, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": t.error_string, "down_rate": t.rate_download, "up_rate": t.rate_upload, "tracker_domain": urlparse(t.trackers[0].announce).hostname or "" if t.trackers else "", "eta": int(getattr(t, "eta", -1)), "seeds_connected": t.peersSendingToUs, "seeds_total": t.seeders, "leechers_connected": t.peersGettingFromUs, "leechers_total": t.leechers, "availability": None, "save_path": getattr(t, "download_dir", None)})
             return res
-        except: return []
+        except Exception as e:
+            print(f"Transmission error: {e}")
+            return []
     def start_torrent(self, h): self.c.start_torrent(h)
     def stop_torrent(self, h): self.c.stop_torrent(h)
     def remove_torrent(self, h): self.c.remove_torrent(h, delete_data=False)

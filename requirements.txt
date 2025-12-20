@@ -5,3 +5,4 @@ qbittorrent-api
 transmission-rpc
 PyYAML
 Flask
+libtorrent

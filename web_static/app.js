@@ -40,6 +40,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // Initial fetch
     refreshData(true);
+    if (window.fetchProfiles) window.fetchProfiles(); 
     startRefreshLoop();
 
     // Refresh rate listener
@@ -50,17 +51,39 @@ window.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Aggressive global context menu suppression for the torrent list area
+    // Aggressive global context menu suppression and handling for the torrent list area
     document.addEventListener('contextmenu', (e) => {
         const tableContainer = els.container();
-        if (tableContainer && tableContainer.contains(e.target)) {
+        // Check if click is anywhere inside the torrent list container
+        const torrentListSection = e.target.closest('.torrent-list-container');
+        
+        if (torrentListSection) {
             e.preventDefault();
             e.stopPropagation();
+            
             const row = e.target.closest('tr[data-hash]');
             showContextMenu(e, row);
             return false;
         }
     }, true);
+
+    const actionsBtn = els.actionsBtn();
+    if (actionsBtn) {
+        actionsBtn.addEventListener('shown.bs.dropdown', () => {
+            // Force focus into the menu to trap NVDA focus
+            const menu = document.getElementById('contextMenu');
+            if (menu) {
+                const firstItem = menu.querySelector('.dropdown-item');
+                if (firstItem) {
+                    // Short delay ensures Bootstrap animations/positioning don't interfere
+                    setTimeout(() => {
+                        firstItem.focus();
+                        announceToSR("Action menu opened. Use arrow keys to navigate.", true);
+                    }, 100);
+                }
+            }
+        });
+    }
  
     document.addEventListener('mousedown', (e) => {
         lastUserActivity = Date.now();
@@ -81,7 +104,6 @@ window.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    const actionsBtn = els.actionsBtn();
     if (actionsBtn) {
         actionsBtn.addEventListener('show.bs.dropdown', (e) => {
             if (selectedHashes.size === 0) {
@@ -132,15 +154,18 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('keydown', (e) => {
+        // Handle Context Menu via Keyboard (Applications Key or Shift+F10)
         if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {  
-            const activeRow = document.activeElement?.closest ? document.activeElement.closest('tr[data-hash]') : null;
-            const targetRow = activeRow || (lastFocusedHash ? domRows.get(lastFocusedHash) : null);
-            if (targetRow) {
+            const inTorrentList = document.activeElement.closest('.torrent-list-container');
+            
+            if (inTorrentList) {
                 e.preventDefault();
                 e.stopPropagation();
+                const activeRow = document.activeElement.closest('tr[data-hash]');
+                const targetRow = activeRow || (lastFocusedHash ? domRows.get(lastFocusedHash) : null);
                 showContextMenu(e, targetRow);
+                return false;
             }
-            return false;
         }
 
         if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
@@ -154,31 +179,62 @@ window.addEventListener('DOMContentLoaded', () => {
         lastUserActivity = Date.now();
         if (visibleTorrents.length === 0) return;
 
-        let currentIndex = -1;
-        if (lastFocusedHash) {
-            currentIndex = visibleTorrents.findIndex(t => t.hash === lastFocusedHash);
-        } else if (selectedHashes.size > 0) {
-            currentIndex = visibleTorrents.indexOf(Array.from(selectedHashes)[0]);
+        // Arrow Key Navigation Logic
+        const navKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageUp', 'PageDown'];
+        if (navKeys.includes(e.key)) {
+            // We already returned early if in INPUT/TEXTAREA or Sidebar.
+            // So we can safely capture these keys for the main torrent list.
+            e.preventDefault();
+            
+            let currentIndex = -1;
+            const focusedRow = document.activeElement.closest('tr[data-hash]');
+            if (focusedRow) {
+                currentIndex = visibleTorrents.findIndex(t => t.hash === focusedRow.dataset.hash);
+            } else if (lastFocusedHash) {
+                currentIndex = visibleTorrents.findIndex(t => t.hash === lastFocusedHash);
+            }
+
+            let nextIndex = currentIndex;
+            if (e.key === 'ArrowDown') nextIndex++;
+            else if (e.key === 'ArrowUp') nextIndex--;
+            else if (e.key === 'Home') nextIndex = 0;
+            else if (e.key === 'End') nextIndex = visibleTorrents.length - 1;
+            else if (e.key === 'PageDown') nextIndex += 10;
+            else if (e.key === 'PageUp') nextIndex -= 10;
+
+            if (nextIndex < 0) nextIndex = 0;
+            if (nextIndex >= visibleTorrents.length) nextIndex = visibleTorrents.length - 1;
+
+            if (visibleTorrents.length > 0) {
+                if (e.shiftKey && currentIndex !== -1) {
+                    // Range selection
+                    const start = Math.min(currentIndex, nextIndex);
+                    const end = Math.max(currentIndex, nextIndex);
+                    for (let i = start; i <= end; i++) {
+                        selectedHashes.add(visibleTorrents[i].hash);
+                    }
+                    lastFocusedHash = visibleTorrents[nextIndex].hash;
+                    updateSelectionVisuals();
+                    focusRow(lastFocusedHash);
+                    updateDetailsDebounced();
+                } else if (e.ctrlKey) {
+                    // Just move focus
+                    focusRow(visibleTorrents[nextIndex].hash);
+                } else {
+                    // Normal navigation
+                    navigateToIndex(nextIndex);
+                }
+            }
+            return;
         }
 
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            navigateToIndex(Math.min(currentIndex + 1, visibleTorrents.length - 1));
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            navigateToIndex(Math.max(currentIndex - 1, 0));
-        } else if (e.key === 'Home') {
-            e.preventDefault();
-            navigateToIndex(0);
-        } else if (e.key === 'End') {
-            e.preventDefault();
-            navigateToIndex(visibleTorrents.length - 1);
-        } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl+A Select All
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
             e.preventDefault();
             visibleTorrents.forEach(t => selectedHashes.add(t.hash));
             updateSelectionVisuals();
-            updateDetailsDebounced();
-            announceToSR(`All ${visibleTorrents.length} torrents selected`);
+            announceToSR(`Selected all ${visibleTorrents.length} torrents`);
+            return;
         }
     });
 });
@@ -194,19 +250,35 @@ function startRefreshLoop() {
 
 function handleSidebarNavigation(e) {
     const links = Array.from(document.querySelectorAll('.sidebar-link'));
-    const currentIndex = links.indexOf(document.activeElement);
-    let nextIndex = -1;
+    if (links.length === 0) return;
 
-    if (e.key === 'ArrowDown') { e.preventDefault(); nextIndex = (currentIndex + 1) % links.length; }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); nextIndex = (currentIndex - 1 + links.length) % links.length; }
-    else if (e.key === 'Home') { e.preventDefault(); nextIndex = 0; }
-    else if (e.key === 'End') { e.preventDefault(); nextIndex = links.length - 1; }
-    else if (e.key === 'Enter') { e.preventDefault(); activateSidebarLink(document.activeElement, e); }
+    let currentIndex = links.indexOf(document.activeElement);
+    if (currentIndex === -1) {
+        currentIndex = links.findIndex(l => l.classList.contains('active'));
+        if (currentIndex === -1) currentIndex = 0;
+    }
+
+    let nextIndex = -1;
+    if (e.key === 'ArrowDown') nextIndex = (currentIndex + 1) % links.length;
+    else if (e.key === 'ArrowUp') nextIndex = (currentIndex - 1 + links.length) % links.length;
+    else if (e.key === 'Home') nextIndex = 0;
+    else if (e.key === 'End') nextIndex = links.length - 1;
+    else if (e.key === 'Enter' || e.key === ' ') { 
+        e.preventDefault(); 
+        activateSidebarLink(links[currentIndex], e); 
+        return; 
+    }
 
     if (nextIndex !== -1) {
-        links.forEach(l => l.tabIndex = -1);
-        links[nextIndex].tabIndex = 0;
-        links[nextIndex].focus();
+        e.preventDefault();
+        const target = links[nextIndex];
+        // Roving tabindex
+        links.forEach(l => l.setAttribute('tabindex', '-1'));
+        target.setAttribute('tabindex', '0');
+        target.focus();
+        
+        // Auto-activate on arrow navigation for better UX (like desktop)
+        activateSidebarLink(target, e);
     }
 }
 
@@ -231,7 +303,10 @@ async function refreshData(force = false) {
         updateSidebarStats(infoData.stats, infoData.trackers);
         
         const now = Date.now();
-        if (now - lastProfileFetch > 30000) { fetchProfiles(); lastProfileFetch = now; }
+        if (now - lastProfileFetch > 30000) { 
+            if (window.fetchProfiles) window.fetchProfiles(); 
+            lastProfileFetch = now; 
+        }
 
         if (isFirstLoad && visibleTorrents.length > 0) {
             // Focus the first torrent on very first load
@@ -310,6 +385,7 @@ function createRowElement(t) {
     tr.dataset.hash = t.hash;
     tr.style.height = ROW_HEIGHT + 'px';
     tr.setAttribute('role', 'row');
+    tr.setAttribute('aria-label', t.name);
     tr.tabIndex = -1;
     
     tr.innerHTML = `
@@ -431,24 +507,26 @@ function updateSelectionVisuals() {
 
 function updateSidebarStats(stats, trackers) {
     if (!stats) return;
-    for (const cat in stats) {
-        const badge = document.getElementById(`count-${cat}`);
-        if (badge) badge.textContent = stats[cat];
-    }
     const trackerList = document.getElementById('trackerList');
     if (trackerList && trackers) {
         trackerList.innerHTML = '';
         Object.entries(trackers).sort((a,b)=>b[1]-a[1]).forEach(([domain, count]) => {
-            const div = document.createElement('div');
-            div.setAttribute('role', 'row');
             const isActive = currentFilter === domain;
-            div.innerHTML = `<div role="gridcell"><a href="#" class="sidebar-link ${isActive ? 'active' : ''}" data-filter="${domain}" role="link" tabindex="-1">${domain} (${count})</a></div>`;
-            trackerList.appendChild(div);
+            const a = document.createElement('a');
+            a.href = '#';
+            a.className = `sidebar-link ${isActive ? 'active' : ''}`;
+            a.dataset.filter = domain;
+            a.role = 'option';
+            a.setAttribute('aria-selected', isActive);
+            a.tabIndex = isActive ? 0 : -1;
+            a.textContent = `${domain} (${count})`;
+            trackerList.appendChild(a);
         });
     }
 }
 
 function activateSidebarLink(link, event) {
+    if (!link) return;
     const profileId = link.dataset.profileId;
     const filter = link.dataset.filter;
     if (profileId) switchProfile(profileId, event);
@@ -460,8 +538,14 @@ function setFilter(f, event) {
     currentFilter = f;
     selectedHashes.clear();
     lastFocusedHash = null;
-    const links = document.querySelectorAll('.sidebar-link');
-    links.forEach(l => l.classList.toggle('active', l.dataset.filter === f));
+    
+    document.querySelectorAll('.sidebar-link').forEach(l => {
+        const isActive = l.dataset.filter === f;
+        l.classList.toggle('active', isActive);
+        l.setAttribute('aria-selected', isActive);
+        l.tabIndex = isActive ? 0 : -1;
+    });
+
     updateFilteredList();
     const container = els.container();
     if (container) container.scrollTop = 0;
@@ -469,7 +553,7 @@ function setFilter(f, event) {
     if (visibleTorrents.length > 0) focusRow(visibleTorrents[0].hash, true);
 }
 
-async function fetchProfiles() {
+window.fetchProfiles = async function() {
     try {
         const res = await fetch('/api/v2/profiles');
         const data = await res.json();
@@ -479,13 +563,20 @@ async function fetchProfiles() {
         currentProfileId = data.current_id;
         for (const id in data.profiles) {
             const p = data.profiles[id];
-            const div = document.createElement('div');
-            div.setAttribute('role', 'row');
             const isActive = id === data.current_id;
-            div.innerHTML = `<div role="gridcell"><a href="#" class="sidebar-link ${isActive ? 'active' : ''}" data-profile-id="${id}" role="link" tabindex="-1">${p.name} (${p.type})</a></div>`;
-            list.appendChild(div);
+            const a = document.createElement('a');
+            a.href = '#';
+            a.className = `sidebar-link ${isActive ? 'active' : ''}`;
+            a.dataset.profileId = id;
+            a.role = 'option';
+            a.setAttribute('aria-selected', isActive);
+            a.tabIndex = isActive ? 0 : -1;
+            a.textContent = `${p.name} (${p.type})`;
+            list.appendChild(a);
         }
-    } catch (e) {}
+    } catch (e) {
+        console.error("fetchProfiles failed:", e);
+    }
 }
 
 async function switchProfile(id, event) {
@@ -494,7 +585,29 @@ async function switchProfile(id, event) {
     announceToSR("Switching client profile...");
     const fd = new FormData(); fd.append('id', id);
     const res = await fetch('/api/v2/profiles/switch', { method: 'POST', body: fd });
-    if (res.ok) { selectedHashes.clear(); lastFocusedHash = null; lastUserActivity = 0; refreshData(true); }
+    if (res.ok) { 
+        selectedHashes.clear(); 
+        lastFocusedHash = null; 
+        lastUserActivity = 0; 
+        currentProfileId = id; 
+        torrentsMap.clear(); 
+        domRows.forEach(tr => tr.remove());
+        domRows.clear();
+        visibleTorrents = [];
+        
+        // Update Sidebar visual state immediately
+        document.querySelectorAll('.sidebar-link[data-profile-id]').forEach(l => {
+            const isActive = l.dataset.profileId === id;
+            l.classList.toggle('active', isActive);
+            l.setAttribute('aria-selected', isActive);
+            l.tabIndex = isActive ? 0 : -1;
+        });
+
+        lastProfileFetch = 0; // Force re-fetch next cycle
+        if (window.fetchProfiles) window.fetchProfiles(); // Or just call it now
+        
+        setTimeout(() => refreshData(true), 500); 
+    }
 }
 
 function updateDetailsDebounced() { if (detailsTimeout) clearTimeout(detailsTimeout); detailsTimeout = setTimeout(updateDetails, 200); }
@@ -592,5 +705,3 @@ function copyToClipboard(type) {
     });
     hideContextMenu();
 }
-
-setInterval(() => refreshData(), 5000);

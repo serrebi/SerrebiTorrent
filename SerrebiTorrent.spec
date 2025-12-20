@@ -1,32 +1,79 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 block_cipher = None
 
-# Ship all OpenSSL 1.1 variants (some envs load the generic name)
-binaries = [
-    ('libcrypto-1_1-x64.dll', '.'),
-    ('libcrypto-1_1.dll', '.'),
-    ('libssl-1_1-x64.dll', '.'),
-    ('libssl-1_1.dll', '.'),
+# Base hidden imports
+hiddenimports = [
+    'libtorrent',
+    'flask',
+    'requests',
+    'bs4',
+    'yaml',
+    'qbittorrentapi',
+    'transmission_rpc',
+    'werkzeug',
+    'jinja2',
+    'click',
+    'itsdangerous',
+    'wx.adv',
+    'wx.html',
+    'xmlrpc.client',
+    'winreg',
+    'base64',
 ]
 
-# Bundle the static web UI folder
-datas = [
-    ('web_static', 'web_static'),
+# Meticulously collect all submodules for main dependencies
+hiddenimports += collect_submodules('flask')
+hiddenimports += collect_submodules('requests')
+hiddenimports += collect_submodules('qbittorrentapi')
+hiddenimports += collect_submodules('transmission_rpc')
+hiddenimports += collect_submodules('bs4')
+hiddenimports += collect_submodules('yaml')
+hiddenimports += collect_submodules('werkzeug')
+hiddenimports += collect_submodules('jinja2')
+hiddenimports += collect_submodules('urllib3')
+hiddenimports += collect_submodules('chardet')
+hiddenimports += collect_submodules('idna')
+hiddenimports += collect_submodules('certifi')
+
+# Project submodules
+local_modules = [
+    'app_paths',
+    'clients',
+    'config_manager',
+    'libtorrent_env',
+    'rss_manager',
+    'session_manager',
+    'torrent_creator',
+    'web_server',
 ]
+hiddenimports += local_modules
+
+datas = [('web_static', 'web_static')]
+datas += collect_data_files('flask')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=binaries,
+    binaries=[
+        ('libcrypto-1_1-x64.dll', '.'),
+        ('libssl-1_1-x64.dll', '.'),
+        ('libcrypto-1_1.dll', '.'),
+        ('libssl-1_1.dll', '.'),
+    ],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
     noarchive=False,
-    optimize=0,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -51,4 +98,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['icon.ico'] if os.path.exists('icon.ico') else None,
 )

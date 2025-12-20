@@ -3304,7 +3304,6 @@ class MainFrame(wx.Frame):
                         self.client.remove_torrent_with_data(h)
                     else:
                         self.client.remove_torrent(h)
-                    self.client.remove_torrent(h)
             wx.CallAfter(self._on_action_complete, "Removed torrents")
         except Exception as e:
             wx.CallAfter(self._on_action_error, f"Remove failed: {e}")

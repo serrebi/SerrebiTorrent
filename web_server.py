@@ -1,8 +1,14 @@
-from flask import Flask, request, jsonify, send_from_directory, session, redirect
 import os
 import threading
+import sys
+from flask import Flask, request, jsonify, send_from_directory, session, redirect
+from werkzeug.utils import secure_filename
 
-app = Flask(__name__, static_folder='web_static')
+def get_bundle_dir():
+    return getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+
+static_dir = os.path.join(get_bundle_dir(), 'web_static')
+app = Flask(__name__, static_folder=static_dir)
 app.secret_key = os.urandom(24)
 
 # Global context to hold reference to the active torrent client and credentials
@@ -29,15 +35,15 @@ def login_required(f):
 @app.route('/')
 @login_required
 def index():
-    return send_from_directory('web_static', 'index.html')
+    return send_from_directory(static_dir, 'index.html')
 
 @app.route('/login.html')
 def login_page():
-    return send_from_directory('web_static', 'login.html')
+    return send_from_directory(static_dir, 'login.html')
 
 @app.route('/<path:filename>')
 def serve_static(filename):
-    return send_from_directory('web_static', filename)
+    return send_from_directory(static_dir, filename)
 
 @app.route('/api/v2/auth/login', methods=['POST'])
 def api_login():
@@ -57,7 +63,7 @@ def api_logout():
 @login_required
 def get_profiles():
     app_ref = WEB_CONFIG['app']
-    if not app_ref: return jsonify({})
+    if not app_ref: return jsonify({'profiles': {}, 'current_id': None})
     profiles = app_ref.config_manager.get_profiles()
     current_id = app_ref.current_profile_id
     return jsonify({
@@ -89,7 +95,8 @@ def add_profile():
     pw = request.form.get('password', '')
     
     if name and type and url:
-        app_ref.config_manager.add_profile(name, type, url, user, pw)
+        import wx
+        wx.CallAfter(app_ref.config_manager.add_profile, name, type, url, user, pw)
         return "Ok."
     return "Missing data", 400
 
@@ -270,7 +277,8 @@ def rss_add_feed():
     url = request.form.get('url')
     alias = request.form.get('alias', '')
     if app_ref and url:
-        app_ref.rss_panel.manager.add_feed(url, alias)
+        import wx
+        wx.CallAfter(app_ref.rss_panel.manager.add_feed, url, alias)
         return "Ok."
     return "Failed", 400
 
@@ -280,7 +288,8 @@ def rss_remove_feed():
     app_ref = WEB_CONFIG['app']
     url = request.form.get('url')
     if app_ref and url:
-        app_ref.rss_panel.manager.remove_feed(url)
+        import wx
+        wx.CallAfter(app_ref.rss_panel.manager.remove_feed, url)
         return "Ok."
     return "Failed", 400
 
@@ -302,10 +311,13 @@ def rss_set_rule():
     
     if app_ref and pattern:
         data = {'pattern': pattern, 'type': rule_type, 'enabled': enabled}
-        if index is not None and index >= 0:
-            app_ref.rss_panel.manager.update_rule(index, data)
-        else:
-            app_ref.rss_panel.manager.add_rule(pattern, rule_type)
+        import wx
+        def do_update():
+            if index is not None and index >= 0:
+                app_ref.rss_panel.manager.update_rule(index, data)
+            else:
+                app_ref.rss_panel.manager.add_rule(pattern, rule_type)
+        wx.CallAfter(do_update)
         return "Ok."
     return "Failed", 400
 
@@ -315,7 +327,8 @@ def rss_remove_rule():
     app_ref = WEB_CONFIG['app']
     index = request.form.get('index', type=int)
     if app_ref and index is not None:
-        app_ref.rss_panel.manager.remove_rule(index)
+        import wx
+        wx.CallAfter(app_ref.rss_panel.manager.remove_rule, index)
         return "Ok."
     return "Failed", 400
 
@@ -328,15 +341,21 @@ def rss_import_flexget():
     
     f = request.files['config']
     # Save to temp and import
-    temp_path = os.path.join(os.environ.get('TEMP', '.'), f.filename)
+    filename = secure_filename(f.filename)
+    temp_path = os.path.join(os.environ.get('TEMP', '.'), filename)
     f.save(temp_path)
-    try:
-        feeds, rules = app_ref.rss_panel.manager.import_flexget_config(temp_path)
-        os.remove(temp_path)
-        return jsonify({'feeds': feeds, 'rules': rules})
-    except Exception as e:
-        if os.path.exists(temp_path): os.remove(temp_path)
-        return str(e), 500
+    
+    import wx
+    def do_import():
+        try:
+            app_ref.rss_panel.manager.import_flexget_config(temp_path)
+        except Exception as e:
+            print(f"Import error: {e}")
+        finally:
+            if os.path.exists(temp_path): os.remove(temp_path)
+
+    wx.CallAfter(do_import)
+    return jsonify({'status': 'Import started in background'})
 
 @app.route('/api/v2/app/prefs')
 @login_required

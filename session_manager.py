@@ -103,7 +103,13 @@ class SessionManager:
                 if self.ses.wait_for_alert(1000):
                     alerts = self.ses.pop_alerts()
                     for alert in alerts:
-                        if isinstance(alert, lt.metadata_received_alert):
+                        if isinstance(alert, lt.save_resume_data_alert):
+                            self._handle_save_resume(alert)
+                        elif isinstance(alert, lt.save_resume_data_failed_alert):
+                            if alert.params.info_hashes.has_v1():
+                                ih = str(alert.params.info_hashes.v1)
+                                self.pending_saves.discard(ih)
+                        elif isinstance(alert, lt.metadata_received_alert):
                             # ... handle metadata ...
                             pass
             except Exception as e:

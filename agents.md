@@ -7,10 +7,10 @@
 
 
 ## Runtime requirements
-- Python 3.13 (64‑bit Store build). Path: `C:\Users\admin\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe`.
+- Python 3.12 (64‑bit).
 - Core packages: see `requirements.txt`. Libs already installed in the user site-packages.
 - Libtorrent DLL resolution happens in `libtorrent_env.py`. Always call `prepare_libtorrent_dlls()` before importing `libtorrent`.
-- OpenSSL 1.1 DLLs (`libcrypto-1_1*.dll`, `libssl-1_1*.dll`) sit in the repo root and must ship with the EXE.
+- OpenSSL 1.1 DLLs (`libcrypto-1_1*.dll`, `libssl-1_1*.dll`) sit in the repo root and are bundled into the EXE.
 
 ## Threading Model
 - **Blocking I/O:** All network operations (fetching torrents, sending commands like start/stop/remove) MUST be offloaded to a background thread to prevent freezing the GUI.
@@ -23,17 +23,19 @@
     5. **Never** call `self.client` methods directly from the main GUI thread.
 
 ## Build commands
-- Install deps (only if new environment): `python -m pip install -r requirements.txt` (Store Python, 64‑bit).
+- Install deps (only if new environment): `python -m pip install -r requirements.txt`.
 - Build EXE: `pyinstaller SerrebiTorrent.spec`. Output lands in `dist\\SerrebiTorrent.exe`.
-- `.spec` bundles the web UI: `Tree('web_static', prefix='web_static')` keeps `index.html`, `login.html`, `app.js`, `style.css` alongside the EXE (or `_MEIPASS` in onefile).
+- The `.spec` file is meticulously configured to include all submodules for major dependencies (`flask`, `requests`, `qbittorrentapi`, `transmission_rpc`, `bs4`, `yaml`, etc.) using `collect_submodules`.
+- It also bundles the web UI (`web_static`), OpenSSL DLLs, and other resources into the single-file executable (`_MEIPASS`).
+- Hidden imports now explicitly include local modules (`clients`, `rss_manager`, `web_server`, etc.) and core dependency sub-components (`werkzeug`, `jinja2`, `urllib3`) to ensure compatibility across different environments.
+- `icon.ico` is conditionally included in the build only if it exists in the root directory.
 - All OpenSSL 1.1 variants are explicitly added (`libssl-1_1*.dll`, `libcrypto-1_1*.dll`); keep these four DLLs in the repo root before building.
-- Legacy spec filename `rtorrentGUI.spec` still exists for backwards compatibility; it points to the same settings and emits SerrebiTorrent.exe.
 
 ## Packaging
-- Ship the entire `dist` folder: EXE + bundled libraries.
+- Ship `SerrebiTorrent.exe` from the `dist` folder. It is a standalone single-file executable.
 - User data (profiles, preferences, resume data, logs) lives under `SerrebiTorrent_Data` next to the EXE in portable mode.
 - To preconfigure profiles for distribution, ship a `SerrebiTorrent_Data\config.json` (use `config.example.json` as a starting point).
-- If you rebrand the EXE, update both `.spec` files and any doc references. Remember to refresh the tray icon (`icon.ico`) if you change branding.
+- If you rebrand the EXE, update the `.spec` file and any doc references. Remember to refresh the tray icon (`icon.ico`) if you change branding.
 
 ## Ops notes
 - Local mode needs the OpenSSL DLLs in `PATH`; `libtorrent_env.py` already injects both the repo root and Python’s `DLLs` directory. Don’t delete that helper.

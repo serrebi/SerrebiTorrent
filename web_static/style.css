@@ -69,6 +69,11 @@ body {
     border-right: 1px solid var(--ut-border);
     width: 200px;
     flex: none;
+    display: block !important; /* Force show */
+}
+
+#profileList, #filterList, #trackerList {
+    display: block !important;
 }
 
 .sidebar-heading {

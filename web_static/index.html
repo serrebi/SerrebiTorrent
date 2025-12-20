@@ -50,26 +50,26 @@
                 
                 <!-- Left Sidebar: Navigation (Tab 1) -->
                 <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse overflow-auto" aria-label="Navigation">
-                    <div class="position-sticky pt-2 sidebar-sticky" id="sidebarNav" role="grid" aria-label="Navigation Sidebar">
-                        <h2 class="sidebar-heading px-3 mt-2 mb-1 text-muted text-uppercase fs-6 d-flex justify-content-between">
-                            <span>PROFILES</span>
-                            <button class="btn btn-sm btn-link p-0 text-decoration-none" data-bs-toggle="modal" data-bs-target="#addProfileModal" title="Add Profile">+</button>
-                        </h2>
-                        <div id="profileList" role="rowgroup"></div>
+                    <div class="position-sticky pt-2 sidebar-sticky" id="sidebarNav" aria-label="Navigation Sidebar">
+                        <div class="px-3 mt-2 mb-1 d-flex justify-content-between align-items-center">
+                            <h2 class="sidebar-heading text-muted text-uppercase fs-6 mb-0">PROFILES</h2>
+                            <button class="btn btn-sm btn-outline-primary py-0 px-1" style="line-height: 1;" data-bs-toggle="modal" data-bs-target="#addProfileModal" title="Add Profile">+</button>
+                        </div>
+                        <div id="profileList" role="listbox" aria-label="Profiles"></div>
 
                         <h2 class="sidebar-heading px-3 mt-4 mb-1 text-muted text-uppercase fs-6">Status</h2>
-                        <div id="filterList" role="rowgroup">
-                            <div role="row"><a href="#" class="sidebar-link active" data-filter="All" onclick="setFilter('All', event)" role="gridcell" tabindex="0">All</a></div>
-                            <div role="row"><a href="#" class="sidebar-link" data-filter="Downloading" onclick="setFilter('Downloading', event)" role="gridcell" tabindex="-1">Downloading</a></div>
-                            <div role="row"><a href="#" class="sidebar-link" data-filter="Seeding" onclick="setFilter('Seeding', event)" role="gridcell" tabindex="-1">Seeding</a></div>
-                            <div role="row"><a href="#" class="sidebar-link" data-filter="Finished" onclick="setFilter('Finished', event)" role="gridcell" tabindex="-1">Finished</a></div>
-                            <div role="row"><a href="#" class="sidebar-link" data-filter="Stopped" onclick="setFilter('Stopped', event)" role="gridcell" tabindex="-1">Stopped</a></div>
-                            <div role="row"><a href="#" class="sidebar-link" data-filter="Failed" onclick="setFilter('Failed', event)" role="gridcell" tabindex="-1">Failed</a></div>
-                            <div role="row"><a href="#" class="sidebar-link" data-filter="RSS" onclick="setFilter('RSS', event)" role="gridcell" tabindex="-1">RSS Downloader</a></div>
+                        <div id="filterList" role="listbox" aria-label="Status Filters">
+                            <a href="#" class="sidebar-link active" data-filter="All" onclick="setFilter('All', event)" role="option" aria-selected="true" tabindex="0">All</a>
+                            <a href="#" class="sidebar-link" data-filter="Downloading" onclick="setFilter('Downloading', event)" role="option" aria-selected="false" tabindex="-1">Downloading</a>
+                            <a href="#" class="sidebar-link" data-filter="Seeding" onclick="setFilter('Seeding', event)" role="option" aria-selected="false" tabindex="-1">Seeding</a>
+                            <a href="#" class="sidebar-link" data-filter="Finished" onclick="setFilter('Finished', event)" role="option" aria-selected="false" tabindex="-1">Finished</a>
+                            <a href="#" class="sidebar-link" data-filter="Stopped" onclick="setFilter('Stopped', event)" role="option" aria-selected="false" tabindex="-1">Stopped</a>
+                            <a href="#" class="sidebar-link" data-filter="Failed" onclick="setFilter('Failed', event)" role="option" aria-selected="false" tabindex="-1">Failed</a>
+                            <a href="#" class="sidebar-link" data-filter="RSS" onclick="setFilter('RSS', event)" role="option" aria-selected="false" tabindex="-1">RSS Downloader</a>
                         </div>
 
                         <h2 class="sidebar-heading px-3 mt-4 mb-1 text-muted text-uppercase fs-6">Trackers</h2>
-                        <div id="trackerList" role="rowgroup">
+                        <div id="trackerList" role="listbox" aria-label="Trackers">
                             <!-- Trackers -->
                         </div>
                     </div>
@@ -132,7 +132,7 @@
                     <div class="footer-actions d-flex align-items-center">
                         <div class="dropup">
                             <button class="btn btn-sm btn-primary me-2 dropdown-toggle" id="torrentActionsBtn" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Torrent Actions</button>
-                            <ul class="dropdown-menu shadow" id="contextMenu" role="menu" aria-label="Torrent actions">
+                            <ul class="dropdown-menu shadow" id="contextMenu" role="menu" aria-label="Torrent actions" tabindex="-1">
                                 <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Start</button></li>
                                 <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('pause')">Pause</button></li>
                                 <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Resume</button></li>
@@ -207,7 +207,7 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">Add Torrent</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
                     <form id="addTorrentForm">
@@ -236,7 +236,7 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">Preferences</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body p-0">
                     <ul class="nav nav-tabs px-3 pt-2" id="settingsTabs" role="tablist">
@@ -317,6 +317,6 @@
     <div id="aria-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=7"></script>
 </body>
 </html>
