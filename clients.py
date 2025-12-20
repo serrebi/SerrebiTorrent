@@ -133,7 +133,7 @@ class SCGITransport(xmlrpc.client.Transport):
                     if not ch: break
                     rd += ch
         except Exception as e:
-            raise xmlrpc.client.ProtocolError(h+hn, 500, str(e), {{}})
+            raise xmlrpc.client.ProtocolError(h+hn, 500, str(e), {})
 
         rs = rd.decode('utf-8', errors='replace')
         if "\r\n\r\n" in rs:
@@ -156,7 +156,7 @@ class SCGITransport(xmlrpc.client.Transport):
 
 class RTorrentClient(BaseClient):
     def __init__(self, u, us=None, pw=None):
-        self.u, self.us, self.pw, self.ck, self.ctx, self.tc = u, us, pw, {{}}, ssl._create_unverified_context(), {{}} 
+        self.u, self.us, self.pw, self.ck, self.ctx, self.tc = u, us, pw, {}, ssl._create_unverified_context(), {} 
         p = urlparse(u)
         if p.scheme == "scgi":
             self.srv = xmlrpc.client.ServerProxy("http://d", transport=SCGITransport(p.hostname, p.port))
@@ -309,7 +309,7 @@ class TransmissionClient(BaseClient):
             res.append({"index": i, "name": f.name, "size": f.length, "progress": f.bytesCompleted/f.length if f.length>0 else 0, "priority": 0 if not s.wanted else (2 if s.priority>0 else 1)})
         return res
     def set_file_priority(self, h, i, p):
-        args = {{}}
+        args = {}
         if p == 0: args['files_unwanted'] = [i]
         else: args['files_wanted'] = [i]; args['priority_high' if p==2 else 'priority_normal'] = [i]
         self.c.change_torrent(h, **args)

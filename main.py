@@ -2173,6 +2173,7 @@ class MainFrame(wx.Frame):
         self.pending_auto_start = False
         self.pending_auto_start_attempts = 0
         self.pending_hash_starts = set()
+        self.pending_cli_arg = None
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.refreshing = False
         self.timer = wx.Timer(self)
@@ -2419,14 +2420,27 @@ class MainFrame(wx.Frame):
     def _update_client_default_save_path(self):
         prefs = self.config_manager.get_preferences()
         fallback = prefs.get('download_path', '')
+        self.client_default_save_path = fallback
+        if not self.client:
+            return
+        generation = self.client_generation
+        client = self.client
+        self.thread_pool.submit(self._fetch_client_default_save_path, client, generation, fallback)
+
+    def _fetch_client_default_save_path(self, client, generation, fallback):
         path = fallback
-        if self.client:
+        if client:
             try:
-                candidate = self.client.get_default_save_path()
+                candidate = client.get_default_save_path()
                 if candidate is not None:
                     path = candidate
-            except Exception as e:
+            except Exception:
                 pass
+        wx.CallAfter(self._apply_client_default_save_path, generation, path)
+
+    def _apply_client_default_save_path(self, generation, path):
+        if generation != self.client_generation:
+            return
         self.client_default_save_path = path
 
     def _update_web_ui(self):
@@ -2495,6 +2509,78 @@ class MainFrame(wx.Frame):
             except Exception:
                 pass
         return None
+
+    def _add_torrent_file_background(self, client, generation, data, save_path, priorities, status_msg):
+        try:
+            if generation != self.client_generation:
+                return
+            if not client:
+                raise RuntimeError("No client connected.")
+            client.add_torrent_file(data, save_path, priorities)
+            wx.CallAfter(self._on_action_complete, status_msg)
+        except Exception as e:
+            wx.CallAfter(self._on_action_error, f"Failed to add torrent: {e}")
+
+    def _add_magnet_background(self, client, generation, url, save_path, status_msg):
+        try:
+            if generation != self.client_generation:
+                return
+            trackers = self.fetch_trackers()
+            if trackers:
+                import urllib.parse
+                for t in trackers:
+                    url += f"&tr={urllib.parse.quote(t)}"
+            if not client:
+                raise RuntimeError("No client connected.")
+            client.add_torrent_url(url, save_path)
+            wx.CallAfter(self._on_action_complete, status_msg)
+        except Exception as e:
+            wx.CallAfter(self._on_action_error, f"Failed to add magnet: {e}")
+
+    def _process_cli_arg(self, arg):
+        if not self.connected or not self.client:
+            wx.LogError("Not connected to any client.")
+            return
+
+        generation = self.client_generation
+        client = self.client
+
+        if arg.startswith("magnet:"):
+            self._prepare_auto_start()
+            hash_hint = self._maybe_hash_from_magnet(arg)
+            if hash_hint:
+                self.pending_hash_starts.add(hash_hint)
+            self.statusbar.SetStatusText("Adding magnet link from CLI...", 0)
+            self.thread_pool.submit(
+                self._add_magnet_background, client, generation, arg, None, "Magnet link added from CLI"
+            )
+            return
+
+        if os.path.exists(arg):
+            try:
+                with open(arg, 'rb') as f:
+                    content = f.read()
+            except Exception as e:
+                wx.LogError(f"Failed to read torrent file: {e}")
+                return
+
+            self._prepare_auto_start()
+            hash_hint = self._maybe_hash_from_torrent_bytes(content)
+            if hash_hint:
+                self.pending_hash_starts.add(hash_hint)
+            self.statusbar.SetStatusText("Adding torrent file from CLI...", 0)
+            self.thread_pool.submit(
+                self._add_torrent_file_background,
+                client,
+                generation,
+                content,
+                None,
+                None,
+                "Torrent file added from CLI",
+            )
+            return
+
+        wx.LogError(f"Invalid argument: {arg}")
 
     def _auto_start_hashes(self, generation, hashes):
         try:
@@ -2638,33 +2724,58 @@ class MainFrame(wx.Frame):
         self.pending_hash_starts = set()
         self._update_remote_prefs_menu_state()
         
+        generation = self.client_generation
+        self.thread_pool.submit(self._connect_profile_background, p, generation)
+
+    def _connect_profile_background(self, profile, generation):
+        client = None
+        error = None
         try:
-            if p['type'] == 'local':
-                self.client = LocalClient(p['url'])
-            elif p['type'] == 'rtorrent':
-                self.client = RTorrentClient(p['url'], p['user'], p['password'])
-            elif p['type'] == 'qbittorrent':
-                self.client = QBittorrentClient(p['url'], p['user'], p['password'])
-            elif p['type'] == 'transmission':
-                self.client = TransmissionClient(p['url'], p['user'], p['password'])
-                
-            self.connected = True
-            self._update_client_default_save_path()
-            self._update_web_ui()
-            
-            status_msg = f"Connected to {p['name']}"
-            if p['type'] != 'local':
-                status_msg += " (Local session active)"
-            
-            self.statusbar.SetStatusText(status_msg, 0)
-            self.refresh_data()
-            self.timer.Start(2000) # Refresh every 2 seconds
-            self._update_remote_prefs_menu_state()
+            if profile['type'] == 'local':
+                client = LocalClient(profile['url'])
+            elif profile['type'] == 'rtorrent':
+                client = RTorrentClient(profile['url'], profile['user'], profile['password'])
+            elif profile['type'] == 'qbittorrent':
+                client = QBittorrentClient(profile['url'], profile['user'], profile['password'])
+            elif profile['type'] == 'transmission':
+                client = TransmissionClient(profile['url'], profile['user'], profile['password'])
+            else:
+                raise ValueError(f"Unknown profile type: {profile.get('type')}")
         except Exception as e:
-            wx.LogError(f"Connection failed: {e}")
+            error = e
+
+        wx.CallAfter(self._on_connect_complete, generation, profile, client, error)
+
+    def _on_connect_complete(self, generation, profile, client, error):
+        if generation != self.client_generation:
+            return
+
+        if error or not client:
+            wx.LogError(f"Connection failed: {error}")
             self.connected = False
+            self.client = None
             self.statusbar.SetStatusText("Connection Failed", 0)
             self._update_remote_prefs_menu_state()
+            return
+
+        self.client = client
+        self.connected = True
+        self._update_client_default_save_path()
+        self._update_web_ui()
+
+        status_msg = f"Connected to {profile.get('name', 'Profile')}"
+        if profile.get('type') != 'local':
+            status_msg += " (Local session active)"
+
+        self.statusbar.SetStatusText(status_msg, 0)
+        self.refresh_data()
+        self.timer.Start(2000) # Refresh every 2 seconds
+        self._update_remote_prefs_menu_state()
+
+        if self.pending_cli_arg:
+            arg = self.pending_cli_arg
+            self.pending_cli_arg = None
+            self._process_cli_arg(arg)
 
     def on_connect(self, event):
         dlg = ConnectDialog(self, self.config_manager)
@@ -2877,8 +2988,18 @@ class MainFrame(wx.Frame):
                         self._prepare_auto_start()
                         if hash_hint:
                             self.pending_hash_starts.add(hash_hint)
-                        self.client.add_torrent_file(data, save_path, priorities)
-                        self.refresh_data()
+                        generation = self.client_generation
+                        client = self.client
+                        self.statusbar.SetStatusText("Adding torrent...", 0)
+                        self.thread_pool.submit(
+                            self._add_torrent_file_background,
+                            client,
+                            generation,
+                            data,
+                            save_path,
+                            priorities,
+                            "Torrent added",
+                        )
                 dlg.Destroy()
 
             except Exception as e:
@@ -2897,16 +3018,20 @@ class MainFrame(wx.Frame):
                         if adlg.ShowModal() == wx.ID_OK:
                             save_path = adlg.get_selected_path() or None
                             hash_hint = self._maybe_hash_from_magnet(url)
-                            trackers = self.fetch_trackers()
-                            if trackers:
-                                import urllib.parse
-                                for t in trackers:
-                                    url += f"&tr={urllib.parse.quote(t)}"
                             self._prepare_auto_start()
                             if hash_hint:
                                 self.pending_hash_starts.add(hash_hint)
-                            self.client.add_torrent_url(url, save_path)
-                            self.refresh_data()
+                            generation = self.client_generation
+                            client = self.client
+                            self.statusbar.SetStatusText("Adding magnet link...", 0)
+                            self.thread_pool.submit(
+                                self._add_magnet_background,
+                                client,
+                                generation,
+                                url,
+                                save_path,
+                                "Magnet link added",
+                            )
                         adlg.Destroy()
                     elif url.startswith(("http://", "https://")):
                         self.statusbar.SetStatusText("Downloading torrent file...", 0)
@@ -2940,11 +3065,25 @@ class MainFrame(wx.Frame):
             save_path = adlg.get_selected_path() or None
             priorities = adlg.get_file_priorities()
             hash_hint = self._maybe_hash_from_torrent_bytes(data)
+            if not self.client:
+                wx.LogError("Not connected to any client.")
+                adlg.Destroy()
+                return
             self._prepare_auto_start()
             if hash_hint:
                 self.pending_hash_starts.add(hash_hint)
-            self.client.add_torrent_file(data, save_path, priorities)
-            self.refresh_data()
+            generation = self.client_generation
+            client = self.client
+            self.statusbar.SetStatusText("Adding torrent...", 0)
+            self.thread_pool.submit(
+                self._add_torrent_file_background,
+                client,
+                generation,
+                data,
+                save_path,
+                priorities,
+                "Torrent added",
+            )
         adlg.Destroy()
 
     def _apply_to_selected(self, action, label):
@@ -3263,8 +3402,18 @@ class MainFrame(wx.Frame):
                     with open(output_path, "rb") as f:
                         content = f.read()
                     self._prepare_auto_start()
-                    self.client.add_torrent_file(content)
-                    self.refresh_data()
+                    generation = self.client_generation
+                    client = self.client
+                    self.statusbar.SetStatusText("Adding created torrent...", 0)
+                    self.thread_pool.submit(
+                        self._add_torrent_file_background,
+                        client,
+                        generation,
+                        content,
+                        None,
+                        None,
+                        "Created torrent added",
+                    )
                 except Exception as e:
                     wx.MessageBox(f"Created torrent, but failed to add to client: {e}", "Create Torrent", wx.OK | wx.ICON_WARNING)
 
@@ -3401,48 +3550,16 @@ class MainFrame(wx.Frame):
         
         # Check for CLI args
         if len(sys.argv) > 1:
-            arg = sys.argv[1]
-            # If not connected, we force a connection dialog if no default was successful
-            if not self.connected:
+            self.pending_cli_arg = sys.argv[1]
+            # If not connected and no default, prompt for a profile.
+            if not self.connected and not default_id:
                 self.on_connect(None)
-            
-            if self.connected:
-                # Give it a moment or just proceed?
-                # Add the torrent
-                if arg.startswith("magnet:"):
-                    try:
-                        trackers = self.fetch_trackers()
-                        if trackers:
-                            import urllib.parse
-                            for t in trackers:
-                                arg += f"&tr={urllib.parse.quote(t)}"
-                        
-                        self._prepare_auto_start()
-                        hash_hint = self._maybe_hash_from_magnet(arg)
-                        if hash_hint:
-                            self.pending_hash_starts.add(hash_hint)
-                        self.client.add_torrent_url(arg)
-                        self.statusbar.SetStatusText("Magnet link added from CLI", 0)
-                        self.refresh_data()
-                    except Exception as e:
-                        wx.LogError(f"Failed to add magnet: {e}")
-                elif os.path.exists(arg):
-                    try:
-                        with open(arg, 'rb') as f:
-                            content = f.read()
-                        hash_hint = self._maybe_hash_from_torrent_bytes(content)
-                        self._prepare_auto_start()
-                        if hash_hint:
-                            self.pending_hash_starts.add(hash_hint)
-                        self.client.add_torrent_file(content)
-                        self.statusbar.SetStatusText("Torrent file added from CLI", 0)
-                        self.refresh_data()
-                    except Exception as e:
-                        wx.LogError(f"Failed to add torrent file: {e}")
-                else:
-                    wx.LogError(f"Invalid argument: {arg}")
+            elif self.connected:
+                arg = self.pending_cli_arg
+                self.pending_cli_arg = None
+                self._process_cli_arg(arg)
 
-        if not self.connected and not default_id:
+        if not self.connected and not default_id and not self.pending_cli_arg:
             self.on_connect(None)
 
 if __name__ == "__main__":
