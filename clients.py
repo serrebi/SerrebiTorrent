@@ -168,6 +168,16 @@ class RTorrentClient(BaseClient):
             except: pass
             self.srv = xmlrpc.client.ServerProxy(u, transport=CookieTransport(self.ctx, self.ck), context=self.ctx)
 
+    def _rpc(self, name, *args, default=None):
+        try:
+            return getattr(self.srv, name)(*args)
+        except xmlrpc.client.Fault as e:
+            # Re-raise faults as they often contain useful error messages from rTorrent
+            print(f"rTorrent RPC Fault in {name}: {e}")
+            raise
+        except Exception:
+            return default
+
     def test_connection(self):
         return self.srv.system.client_version()
 
@@ -204,6 +214,51 @@ class RTorrentClient(BaseClient):
     def get_global_stats(self):
         try: return self.srv.throttle.global_down.rate(), self.srv.throttle.global_up.rate()
         except: return 0, 0
+    def get_app_preferences(self):
+        prefs = {
+            "dl_limit": self._rpc("throttle.global_down.max_rate"),
+            "ul_limit": self._rpc("throttle.global_up.max_rate"),
+            "port_range": self._rpc("network.port_range"),
+            "dht_mode": self._rpc("dht.mode"),
+            "pex_enabled": self._rpc("protocol.pex"),
+            "use_udp_trackers": self._rpc("trackers.use_udp"),
+            "encryption": self._rpc("protocol.encryption"),
+            "proxy_address": self._rpc("network.proxy_address"),
+            "max_peers": self._rpc("throttle.max_peers.normal"),
+            "min_peers": self._rpc("throttle.min_peers.normal"),
+            "max_uploads": self._rpc("throttle.max_uploads"),
+            "directory_default": self._rpc("directory.default"),
+            "check_hash": self._rpc("pieces.hash.on_completion"),
+        }
+        return {k: v for k, v in prefs.items() if v is not None}
+
+    def set_app_preferences(self, p):
+        if not p:
+            return
+        setters = {
+            "dl_limit": "throttle.global_down.max_rate.set",
+            "ul_limit": "throttle.global_up.max_rate.set",
+            "port_range": "network.port_range.set",
+            "dht_mode": "dht.mode.set",
+            "pex_enabled": "protocol.pex.set",
+            "use_udp_trackers": "trackers.use_udp.set",
+            "encryption": "protocol.encryption.set",
+            "proxy_address": "network.proxy_address.set",
+            "max_peers": "throttle.max_peers.normal.set",
+            "min_peers": "throttle.min_peers.normal.set",
+            "max_uploads": "throttle.max_uploads.set",
+            "directory_default": "directory.default.set",
+            "check_hash": "pieces.hash.on_completion.set",
+        }
+        for key, method in setters.items():
+            if key not in p:
+                continue
+            val = p.get(key)
+            if val is None:
+                continue
+            if key in ("pex_enabled", "use_udp_trackers", "check_hash"):
+                val = 1 if bool(val) else 0
+            self._rpc(method, val)
     def recheck_torrent(self, h): self.srv.d.check_hash(h)
     def reannounce_torrent(self, h): self.srv.d.tracker_announce(h)
     def get_torrent_save_path(self, h): return self.srv.d.directory(h)
@@ -254,6 +309,16 @@ class QBittorrentClient(BaseClient):
     def recheck_torrent(self, h): self.c.torrents_recheck(torrent_hashes=h)
     def reannounce_torrent(self, h): self.c.torrents_reannounce(torrent_hashes=h)
     def get_global_stats(self): i = self.c.transfer_info(); return i.dl_info_speed, i.up_info_speed
+    def get_app_preferences(self):
+        try:
+            return dict(self.c.app.preferences())
+        except Exception as e:
+            print(f"qBittorrent prefs error: {e}")
+            return None
+    def set_app_preferences(self, p):
+        if not p:
+            return
+        self.c.app.set_preferences(prefs=p)
     def get_torrent_save_path(self, h):
         inf = self.c.torrents_info(torrent_hashes=h)
         return inf[0].get('save_path') if inf else None
@@ -299,6 +364,69 @@ class TransmissionClient(BaseClient):
     def get_global_stats(self):
         s = self.c.session_stats()
         return s.download_speed, s.upload_speed
+    def _session_value(self, session, key):
+        try:
+            return getattr(session, key)
+        except Exception:
+            return None
+    def get_app_preferences(self):
+        try:
+            session = self.c.get_session()
+        except Exception as e:
+            print(f"Transmission prefs error: {e}")
+            return None
+        keys = [
+            "speed_limit_down_enabled", "speed_limit_down", "speed_limit_up_enabled", "speed_limit_up",
+            "alt_speed_enabled", "alt_speed_down", "alt_speed_up", "alt_speed_time_enabled",
+            "alt_speed_time_begin", "alt_speed_time_end", "alt_speed_time_day",
+            "peer_port", "peer_port_random_on_start", "port_forwarding_enabled", "utp_enabled",
+            "dht_enabled", "pex_enabled", "lpd_enabled", "encryption", "blocklist_enabled",
+            "blocklist_url", "peer_limit_global", "peer_limit_per_torrent", "idle_seeding_limit_enabled",
+            "idle_seeding_limit", "seedRatioLimited", "seedRatioLimit", "download_queue_enabled",
+            "download_queue_size", "seed_queue_enabled", "seed_queue_size", "download_dir",
+            "incomplete_dir_enabled", "incomplete_dir", "rename_partial_files",
+            "trash_original_torrent_files", "start_added_torrents", "cache_size_mb",
+            "script_torrent_done_enabled", "script_torrent_done_filename",
+        ]
+        prefs = {}
+        for key in keys:
+            if key == "seedRatioLimited":
+                value = self._session_value(session, "seed_ratio_limited")
+            elif key == "seedRatioLimit":
+                value = self._session_value(session, "seed_ratio_limit")
+            else:
+                value = self._session_value(session, key)
+            if value is not None:
+                prefs[key] = value
+        return prefs
+    def set_app_preferences(self, p):
+        if not p:
+            return
+        mapping = {}
+        valid_keys = {
+            "speed_limit_down_enabled", "speed_limit_down", "speed_limit_up_enabled", "speed_limit_up",
+            "alt_speed_enabled", "alt_speed_down", "alt_speed_up", "alt_speed_time_enabled",
+            "alt_speed_time_begin", "alt_speed_time_end", "alt_speed_time_day",
+            "peer_port", "peer_port_random_on_start", "port_forwarding_enabled", "utp_enabled",
+            "dht_enabled", "pex_enabled", "lpd_enabled", "encryption", "blocklist_enabled",
+            "blocklist_url", "peer_limit_global", "peer_limit_per_torrent", "idle_seeding_limit_enabled",
+            "idle_seeding_limit", "seedRatioLimited", "seedRatioLimit", "download_queue_enabled",
+            "download_queue_size", "seed_queue_enabled", "seed_queue_size", "download_dir",
+            "incomplete_dir_enabled", "incomplete_dir", "rename_partial_files",
+            "trash_original_torrent_files", "start_added_torrents", "cache_size_mb",
+            "script_torrent_done_enabled", "script_torrent_done_filename",
+        }
+        for key, value in p.items():
+            if key not in valid_keys:
+                continue
+            if key == "seedRatioLimited":
+                mapping["seed_ratio_limited"] = value
+            elif key == "seedRatioLimit":
+                mapping["seed_ratio_limit"] = value
+            else:
+                mapping[key] = value
+        if mapping:
+            self.c.set_session(**mapping)
     def get_torrent_save_path(self, h):
         t = self.c.get_torrent(h)
         return getattr(t, 'downloadDir', None)

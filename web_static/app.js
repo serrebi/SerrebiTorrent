@@ -237,6 +237,79 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
         }
     });
+
+    // --- Settings & Remote Prefs Logic ---
+    const settingsModal = document.getElementById('settingsModal');
+    if (settingsModal) {
+        settingsModal.addEventListener('show.bs.modal', loadAppSettings);
+    }
+    
+    const remoteTab = document.getElementById('remote-settings-tab');
+    if (remoteTab) {
+        remoteTab.addEventListener('shown.bs.tab', loadRemoteSettings);
+    }
+    
+    const settingsForm = document.getElementById('settingsForm');
+    if (settingsForm) {
+        settingsForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const fd = new FormData(settingsForm);
+            const data = {};
+            for (const [key, value] of fd.entries()) {
+                data[key] = value;
+            }
+            const minTray = document.getElementById('minToTray');
+            if (minTray) data['min_to_tray'] = !!minTray.checked;
+            
+            try {
+                const res = await fetch('/api/v2/app/prefs', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                if (res.ok) {
+                    alert('Settings saved.');
+                    const modal = bootstrap.Modal.getInstance(settingsModal);
+                    if(modal) modal.hide();
+                } else {
+                    alert('Error saving settings.');
+                }
+            } catch (err) { console.error(err); alert('Error saving settings.'); }
+        };
+    }
+    
+    const remoteForm = document.getElementById('remoteSettingsForm');
+    if (remoteForm) {
+        remoteForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const data = {};
+            const inputs = remoteForm.querySelectorAll('input, select');
+            inputs.forEach(input => {
+                const key = input.name;
+                if (!key) return;
+                if (input.type === 'checkbox') {
+                    data[key] = input.checked; 
+                } else if (input.type === 'number') {
+                    data[key] = parseFloat(input.value);
+                } else {
+                    data[key] = input.value;
+                }
+            });
+            
+            try {
+                const res = await fetch('/api/v2/app/remote_prefs', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                if (res.ok) {
+                    alert('Remote settings saved.');
+                } else {
+                    alert('Error saving remote settings: ' + await res.text());
+                }
+            } catch (err) { console.error(err); alert('Error saving remote settings.'); }
+        };
+    }
 });
 
 function startRefreshLoop() {
@@ -704,4 +777,94 @@ function copyToClipboard(type) {
         announceToSR("Copied to clipboard");
     });
     hideContextMenu();
+}
+
+async function loadAppSettings() {
+    try {
+        const res = await fetch('/api/v2/app/prefs');
+        const prefs = await res.json();
+        const form = document.getElementById('settingsForm');
+        if (!form) return;
+        
+        // Reset form
+        form.reset();
+        
+        // Populate
+        for (const key in prefs) {
+            const el = form.elements[key];
+            if (el) {
+                if (el.type === 'checkbox') el.checked = prefs[key];
+                else el.value = prefs[key];
+            }
+        }
+        if (prefs.min_to_tray !== undefined) {
+            const cb = document.getElementById('minToTray');
+            if(cb) cb.checked = prefs.min_to_tray;
+        }
+        
+    } catch (e) { console.error("Load app settings error", e); }
+}
+
+async function loadRemoteSettings() {
+    const container = document.getElementById('remoteSettingsFields');
+    if (!container) return;
+    container.innerHTML = '<p class="text-muted">Loading...</p>';
+    
+    try {
+        const res = await fetch('/api/v2/app/remote_prefs');
+        const data = await res.json();
+        
+        if (!data.prefs) {
+            container.innerHTML = '<div class="alert alert-info">No remote settings available (or Local client active).</div>';
+            return;
+        }
+        
+        container.innerHTML = '';
+        
+        // Sort keys for consistent display
+        const keys = Object.keys(data.prefs).sort();
+        
+        keys.forEach(key => {
+            const val = data.prefs[key];
+            const type = typeof val;
+            
+            const col = document.createElement('div');
+            col.className = 'col-md-6 mb-3';
+            
+            const label = document.createElement('label');
+            label.className = 'form-label small text-muted text-uppercase';
+            label.textContent = key.replace(/_/g, ' ');
+            label.htmlFor = 'rem_' + key;
+            
+            let input;
+            if (type === 'boolean' || (val === 0 || val === 1) && (key.includes('enable') || key.includes('check'))) {
+                col.className = 'col-md-6 mb-3 form-check ps-5 pt-4';
+                input = document.createElement('input');
+                input.type = 'checkbox';
+                input.className = 'form-check-input';
+                input.checked = !!val;
+                label.className = 'form-check-label';
+                col.appendChild(input);
+                col.appendChild(label);
+            } else {
+                input = document.createElement('input');
+                input.className = 'form-control form-control-sm';
+                if (type === 'number') input.type = 'number';
+                else input.type = 'text';
+                input.value = val;
+                
+                col.appendChild(label);
+                col.appendChild(input);
+            }
+            
+            input.id = 'rem_' + key;
+            input.name = key;
+            
+            container.appendChild(col);
+        });
+        
+    } catch (e) {
+        console.error("Load remote settings error", e);
+        container.innerHTML = '<div class="alert alert-danger">Failed to load settings.</div>';
+    }
 }

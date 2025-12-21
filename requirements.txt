@@ -6,3 +6,5 @@ transmission-rpc
 PyYAML
 Flask
 libtorrent
+pyinstaller
+pywin32

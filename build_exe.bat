@@ -7,7 +7,7 @@ echo ========================================
 taskkill /F /IM SerrebiTorrent.exe /T >nul 2>&1
 
 :: Ensure dependencies
-pip install -r requirements.txt
+:: pip install -r requirements.txt
 
 :: Clean previous artifacts
 if exist build rd /s /q build
@@ -21,4 +21,3 @@ echo ========================================
 echo SUCCESS! Your portable EXE is in 'dist'.
 echo No other files are needed to run.
 echo ========================================
-pause

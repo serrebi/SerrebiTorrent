@@ -2638,9 +2638,14 @@ class MainFrame(wx.Frame):
     def _fetch_remote_preferences(self):
         try:
             prefs = self.client.get_app_preferences()
+            if prefs is None:
+                wx.CallAfter(wx.MessageBox, "Failed to retrieve preferences from remote client. The client might not support this feature or there is a connection issue.", "Error", wx.OK | wx.ICON_ERROR)
+                wx.CallAfter(self.statusbar.SetStatusText, "Failed to fetch preferences", 0)
+                return
             wx.CallAfter(self._show_remote_preferences_dialog, prefs)
         except Exception as e:
             wx.CallAfter(wx.LogError, f"Failed to fetch remote preferences: {e}")
+            wx.CallAfter(self.statusbar.SetStatusText, "Error fetching preferences", 0)
 
     def _show_remote_preferences_dialog(self, prefs):
         if prefs is None:
