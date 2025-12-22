@@ -156,13 +156,15 @@ class SCGITransport(xmlrpc.client.Transport):
 
 class RTorrentClient(BaseClient):
     def __init__(self, u, us=None, pw=None):
+        if not u.startswith(('http://', 'https://', 'scgi://')):
+            u = 'http://' + u
         self.u, self.us, self.pw, self.ck, self.ctx, self.tc = u, us, pw, {}, ssl._create_unverified_context(), {} 
         p = urlparse(u)
         if p.scheme == "scgi":
             self.srv = xmlrpc.client.ServerProxy("http://d", transport=SCGITransport(p.hostname, p.port))
         else:
             try:
-                r = requests.get(u, verify=False, allow_redirects=False)
+                r = requests.get(u, verify=False, allow_redirects=False, timeout=5)
                 if r.status_code == 401 and us and "@" not in u:
                     u = p._replace(netloc=f"{us}:{pw}@{p.netloc}").geturl()
             except: pass
@@ -230,7 +232,12 @@ class RTorrentClient(BaseClient):
             "directory_default": self._rpc("directory.default"),
             "check_hash": self._rpc("pieces.hash.on_completion"),
         }
-        return {k: v for k, v in prefs.items() if v is not None}
+        res = {k: v for k, v in prefs.items() if v is not None}
+        return res if res else None
+
+    def get_default_save_path(self):
+        prefs = self.get_app_preferences()
+        return prefs.get('directory_default') if prefs else None
 
     def set_app_preferences(self, p):
         if not p:
@@ -311,14 +318,17 @@ class QBittorrentClient(BaseClient):
     def get_global_stats(self): i = self.c.transfer_info(); return i.dl_info_speed, i.up_info_speed
     def get_app_preferences(self):
         try:
-            return dict(self.c.app.preferences())
+            return dict(self.c.app_preferences())
         except Exception as e:
             print(f"qBittorrent prefs error: {e}")
             return None
+    def get_default_save_path(self):
+        prefs = self.get_app_preferences()
+        return prefs.get('save_path') if prefs else None
     def set_app_preferences(self, p):
         if not p:
             return
-        self.c.app.set_preferences(prefs=p)
+        self.c.app_set_preferences(prefs=p)
     def get_torrent_save_path(self, h):
         inf = self.c.torrents_info(torrent_hashes=h)
         return inf[0].get('save_path') if inf else None
@@ -337,6 +347,8 @@ class QBittorrentClient(BaseClient):
 from transmission_rpc import Client as TransClient
 class TransmissionClient(BaseClient):
     def __init__(self, u, us, pw):
+        if not u.startswith(('http://', 'https://')):
+            u = 'http://' + u
         p = urlparse(u); self.c = TransClient(host=p.hostname, port=p.port, username=us, password=pw, protocol=p.scheme)
     def test_connection(self): return self.c.server_version
     def get_torrents_full(self):
@@ -398,7 +410,10 @@ class TransmissionClient(BaseClient):
                 value = self._session_value(session, key)
             if value is not None:
                 prefs[key] = value
-        return prefs
+        return prefs if prefs else None
+    def get_default_save_path(self):
+        prefs = self.get_app_preferences()
+        return prefs.get('download_dir') if prefs else None
     def set_app_preferences(self, p):
         if not p:
             return
@@ -530,3 +545,15 @@ class LocalClient(BaseClient):
         x = self._gh(h)
         if not x: return []
         return [{"url": str(t['url']), "status": "Working" if t['verified'] else "?", "peers": 0, "message": str(t.get('message',''))} for t in x.trackers()]
+    def get_app_preferences(self):
+        from config_manager import ConfigManager
+        return ConfigManager().get_preferences()
+    def get_default_save_path(self):
+        return self._edp()
+    def set_app_preferences(self, p):
+        from config_manager import ConfigManager
+        cm = ConfigManager()
+        prefs = cm.get_preferences()
+        prefs.update(p)
+        cm.set_preferences(prefs)
+        self.m.apply_preferences(prefs)

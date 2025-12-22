@@ -1261,6 +1261,20 @@ class RemotePreferencesDialog(wx.Dialog):
         "dht_mode": [("Auto", "auto"), ("On", "on"), ("Off", "off")]
     }
 
+    # --- Local Schema ---
+    LOCAL_CATEGORY_FIELDS = OrderedDict([
+        ("General", ["download_path", "auto_start", "min_to_tray", "close_to_tray"]),
+        ("Connection", ["dl_limit", "ul_limit", "max_connections", "max_uploads", "listen_port", "enable_upnp", "enable_natpmp", "enable_dht", "enable_lsd"]),
+        ("Trackers", ["enable_trackers", "tracker_url"]),
+        ("RSS", ["rss_update_interval"]),
+        ("Web UI", ["web_ui_enabled", "web_ui_port", "web_ui_user", "web_ui_pass"]),
+        ("Proxy", ["proxy_type", "proxy_host", "proxy_port", "proxy_user", "proxy_password"])
+    ])
+    LOCAL_BOOL_KEYS = {"auto_start", "min_to_tray", "close_to_tray", "enable_upnp", "enable_natpmp", "enable_dht", "enable_lsd", "enable_trackers", "web_ui_enabled"}
+    LOCAL_ENUM_CHOICES = {
+        "proxy_type": [("None", 0), ("SOCKS4", 1), ("SOCKS5", 2), ("HTTP", 3)]
+    }
+
     def __init__(self, parent, prefs, client_name="qBittorrent"):
         super().__init__(parent, title=f"{client_name} Remote Preferences", size=(900, 640))
         self.prefs = OrderedDict(prefs or {})
@@ -1282,6 +1296,13 @@ class RemotePreferencesDialog(wx.Dialog):
             self.JSON_FIELDS = set()
             self.PASSWORD_FIELDS = set()
             self.ENUM_CHOICES = self.RTORRENT_ENUM_CHOICES
+        elif client_name == "Local":
+            self.CATEGORY_FIELDS = self.LOCAL_CATEGORY_FIELDS
+            self.BOOL_KEYS = self.LOCAL_BOOL_KEYS
+            self.MULTILINE_FIELDS = set()
+            self.JSON_FIELDS = set()
+            self.PASSWORD_FIELDS = {"proxy_password", "web_ui_pass"}
+            self.ENUM_CHOICES = self.LOCAL_ENUM_CHOICES
         else:
             # Default to qBittorrent
             self.CATEGORY_FIELDS = self.QBIT_CATEGORY_FIELDS
@@ -2355,10 +2376,12 @@ class MainFrame(wx.Frame):
         self.qbit_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&qBittorrent Remote Preferences", "Edit connected qBittorrent settings")
         self.trans_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&Transmission Remote Preferences", "Edit connected Transmission settings")
         self.rtorrent_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&rTorrent Remote Preferences", "Edit connected rTorrent settings")
+        self.local_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&Local Session Preferences", "Edit local session settings in a structured view")
         
         self.qbit_remote_prefs_item.Enable(False)
         self.trans_remote_prefs_item.Enable(False)
         self.rtorrent_remote_prefs_item.Enable(False)
+        self.local_remote_prefs_item.Enable(False)
         
         menubar.Append(tools_menu, "&Tools")
 
@@ -2389,6 +2412,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.qbit_remote_prefs_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.trans_remote_prefs_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.rtorrent_remote_prefs_item)
+        self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.local_remote_prefs_item)
 
         # Keep the remote-preferences menu in sync with connection state.
         self._update_remote_prefs_menu_state()
@@ -2463,6 +2487,7 @@ class MainFrame(wx.Frame):
         is_qbit = isinstance(self.client, QBittorrentClient) and self.connected
         is_trans = isinstance(self.client, TransmissionClient) and self.connected
         is_rtorrent = isinstance(self.client, RTorrentClient) and self.connected
+        is_local = isinstance(self.client, LocalClient) and self.connected
         
         if hasattr(self, "qbit_remote_prefs_item"):
             self.qbit_remote_prefs_item.Enable(is_qbit)
@@ -2470,6 +2495,8 @@ class MainFrame(wx.Frame):
             self.trans_remote_prefs_item.Enable(is_trans)
         if hasattr(self, "rtorrent_remote_prefs_item"):
             self.rtorrent_remote_prefs_item.Enable(is_rtorrent)
+        if hasattr(self, "local_remote_prefs_item"):
+            self.local_remote_prefs_item.Enable(is_local)
 
     def _prepare_auto_start(self):
         if not self.client:
@@ -2623,14 +2650,14 @@ class MainFrame(wx.Frame):
         dlg.Destroy()
 
     def on_remote_preferences(self, event):
-        if not self.connected or isinstance(self.client, LocalClient):
-            wx.MessageBox("Remote preferences are not available for the local client.", "Information", wx.OK | wx.ICON_INFORMATION)
+        if not self.connected:
             return
 
         name = "Remote Client"
         if isinstance(self.client, QBittorrentClient): name = "qBittorrent"
         elif isinstance(self.client, RTorrentClient): name = "rTorrent"
         elif isinstance(self.client, TransmissionClient): name = "Transmission"
+        elif isinstance(self.client, LocalClient): name = "Local"
 
         self.statusbar.SetStatusText(f"Fetching {name} preferences...", 0)
         self.thread_pool.submit(self._fetch_remote_preferences)
@@ -2656,6 +2683,7 @@ class MainFrame(wx.Frame):
         if isinstance(self.client, QBittorrentClient): client_name = "qBittorrent"
         elif isinstance(self.client, RTorrentClient): client_name = "rTorrent"
         elif isinstance(self.client, TransmissionClient): client_name = "Transmission"
+        elif isinstance(self.client, LocalClient): client_name = "Local"
 
         dlg = RemotePreferencesDialog(self, prefs, client_name)
         if dlg.ShowModal() == wx.ID_OK:
@@ -2669,7 +2697,13 @@ class MainFrame(wx.Frame):
     def _apply_remote_preferences(self, prefs):
         try:
             self.client.set_app_preferences(prefs)
-            wx.CallAfter(self.statusbar.SetStatusText, "qBittorrent preferences saved", 0)
+            name = "Remote"
+            if isinstance(self.client, QBittorrentClient): name = "qBittorrent"
+            elif isinstance(self.client, RTorrentClient): name = "rTorrent"
+            elif isinstance(self.client, TransmissionClient): name = "Transmission"
+            elif isinstance(self.client, LocalClient): name = "Local"
+            
+            wx.CallAfter(self.statusbar.SetStatusText, f"{name} preferences saved", 0)
             wx.CallAfter(self._update_client_default_save_path)
         except Exception as e:
             wx.CallAfter(wx.LogError, f"Failed to update remote preferences: {e}")
@@ -2746,6 +2780,9 @@ class MainFrame(wx.Frame):
                 client = TransmissionClient(profile['url'], profile['user'], profile['password'])
             else:
                 raise ValueError(f"Unknown profile type: {profile.get('type')}")
+            
+            if client:
+                client.test_connection()
         except Exception as e:
             error = e
 
