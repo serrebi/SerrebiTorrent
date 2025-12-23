@@ -24,16 +24,16 @@
 
 ## Build commands
 - Install deps (only if new environment): `python -m pip install -r requirements.txt`.
-- Build EXE: `pyinstaller SerrebiTorrent.spec`. Output lands in `dist\\SerrebiTorrent.exe`.
-- The `.spec` file is meticulously configured to include all submodules for major dependencies (`flask`, `requests`, `qbittorrentapi`, `transmission_rpc`, `bs4`, `yaml`, etc.) using `collect_submodules`.
-- It also bundles the web UI (`web_static`), OpenSSL DLLs, and other resources into the single-file executable (`_MEIPASS`).
-- Hidden imports now explicitly include local modules (`clients`, `rss_manager`, `web_server`, etc.) and core dependency sub-components (`werkzeug`, `jinja2`, `urllib3`) to ensure compatibility across different environments.
+- Build EXE: `pyinstaller SerrebiTorrent.spec`. Output lands in `dist\\SerrebiTorrent\\`.
+- The `.spec` file is configured for a directory-based distribution (`onedir`) to improve stability and startup performance. It includes all submodules for major dependencies (`flask`, `requests`, `qbittorrentapi`, `transmission_rpc`, `bs4`, `yaml`, etc.) using `collect_submodules`.
+- It also bundles the web UI (`web_static`), OpenSSL DLLs, and other resources into the distribution folder.
+- Hidden imports explicitly include local modules (`clients`, `rss_manager`, `web_server`, etc.) and core dependency sub-components (`werkzeug`, `jinja2`, `urllib3`) to ensure compatibility across different environments.
 - `icon.ico` is conditionally included in the build only if it exists in the root directory.
 - All OpenSSL 1.1 variants are explicitly added (`libssl-1_1*.dll`, `libcrypto-1_1*.dll`); keep these four DLLs in the repo root before building.
 
 ## Packaging
-- Ship `SerrebiTorrent.exe` from the `dist` folder. It is a standalone single-file executable.
-- User data (profiles, preferences, resume data, logs) lives under `SerrebiTorrent_Data` next to the EXE in portable mode.
+- Ship the entire `SerrebiTorrent` folder from the `dist` directory. The main executable is `SerrebiTorrent.exe` inside that folder.
+- User data (profiles, preferences, resume data, logs) lives under `SerrebiTorrent_Data` next to the EXE (or the distribution folder) in portable mode.
 - To preconfigure profiles for distribution, ship a `SerrebiTorrent_Data\config.json` (use `config.example.json` as a starting point).
 - If you rebrand the EXE, update the `.spec` file and any doc references. Remember to refresh the tray icon (`icon.ico`) if you change branding.
 

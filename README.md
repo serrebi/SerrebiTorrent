@@ -11,19 +11,23 @@ SerrebiTorrent is a Windows desktop app that lets you keep tabs on your torrents
 - Thoughtful keyboard workflow and tray support that play nicely with NVDA and other screen readers.
 
 ## Quick start on Windows
-Grab the latest release from the releases section, 
+Grab the latest release from the releases section:
 https://github.com/serrebi/SerrebiTorrent/releases
-and place it in an empty folder. Unless I release setup files one day, It is a portable app.
+
+SerrebiTorrent is a portable app. Download the ZIP file, extract the entire `SerrebiTorrent` folder to a location of your choice, and run `SerrebiTorrent.exe`. **Note:** Do not move the `.exe` out of its folder, as it requires the accompanying files to run.
 
 ## How to build
-I will not be going through installing python, and such. I asume you know how to do that, or can do it with Codex or Gemini.
+I will not be going through installing python, and such. I assume you know how to do that, or can do it with Codex or Gemini.
 
 git clone https://github.com/serrebi/SerrebiTorrent
 
 Pip3 install -r ./requirements.txt
 PyInstaller --noconfirm --clean SerrebiTorrent.spec
-The spec already packages the `web_static` folder (web UI) and the OpenSSL 1.1 DLLs; keep those files in the repo root before building.
-The .exe will be in the dist folder.
+
+The `.spec` is configured for a directory distribution (`onedir`) to ensure maximum compatibility. It automatically packages the `web_static` folder (web UI) and the OpenSSL 1.1 DLLs. Keep those files in the repo root before building.
+
+The build output will be a folder named `SerrebiTorrent` inside the `dist` directory. To distribute the app, ZIP this entire folder.
+
 ## Accessibility & shortcuts
 Everything stays reachable by keyboard:
 - Ctrl+Shift+C: Connection Manager

@@ -1,13 +1,10 @@
 @echo off
 echo ========================================
-echo Building SerrebiTorrent All-In-One EXE
+echo Building SerrebiTorrent Distribution
 echo ========================================
 
 :: Kill running instances to avoid file-in-use errors
 taskkill /F /IM SerrebiTorrent.exe /T >nul 2>&1
-
-:: Ensure dependencies
-:: pip install -r requirements.txt
 
 :: Clean previous artifacts
 if exist build rd /s /q build
@@ -18,6 +15,6 @@ pyinstaller SerrebiTorrent.spec --noconfirm
 
 echo.
 echo ========================================
-echo SUCCESS! Your portable EXE is in 'dist'.
-echo No other files are needed to run.
+echo SUCCESS! Your portable distribution is in 'dist\SerrebiTorrent'.
+echo To share, ZIP the entire 'SerrebiTorrent' folder.
 echo ========================================

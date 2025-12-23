@@ -3488,7 +3488,7 @@ class MainFrame(wx.Frame):
     def _remove_background(self, hashes, with_data):
         try:
             if hasattr(self.client, 'remove_torrents'):
-                self.client.remove_torrents(hashes, delete_files=with_data)
+                self.client.remove_torrents(hashes, with_data)
             else:
                 for h in hashes:
                     if with_data:
