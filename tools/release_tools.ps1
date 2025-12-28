@@ -5,13 +5,29 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$tags = git tag --list "v*.*.*" | Where-Object { $_ -match "^v\d+\.\d+\.\d+$" }
-$latest = $null
-if ($tags) {
-    $latest = $tags | Sort-Object { [version]($_.TrimStart("v")) } | Select-Object -Last 1
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$versionFile = Join-Path $repoRoot "app_version.py"
+if (-not (Test-Path $versionFile)) {
+    throw "Version file not found: $versionFile"
+}
+$versionLine = Select-String -Path $versionFile -Pattern "^APP_VERSION\s*=" | Select-Object -First 1
+if (-not $versionLine) {
+    throw "APP_VERSION not found in $versionFile"
+}
+if ($versionLine.Line -match 'APP_VERSION\s*=\s*"(?<ver>\d+\.\d+\.\d+)"') {
+    $minVersion = [version]$Matches.ver
+} else {
+    throw "APP_VERSION format invalid in $versionFile"
 }
 
-$base = if ($latest) { [version]$latest.TrimStart("v") } else { [version]"1.0.0" }
+$tags = git tag --list "v*.*.*" | Where-Object { $_ -match "^v\d+\.\d+\.\d+$" }
+$validTags = $tags | Where-Object { [version]($_.TrimStart("v")) -ge $minVersion }
+$latest = $null
+if ($validTags) {
+    $latest = $validTags | Sort-Object { [version]($_.TrimStart("v")) } | Select-Object -Last 1
+}
+
+$base = if ($latest) { [version]$latest.TrimStart("v") } else { $minVersion }
 $range = if ($latest) { "$latest..HEAD" } else { "HEAD" }
 
 $log = git log $range --pretty=format:%s`n%b`n--END--
@@ -30,13 +46,16 @@ foreach ($msg in $commits) {
 }
 
 if (-not $latest) {
-    $next = [version]"1.0.0"
+    $next = $minVersion
 } elseif ($breaking) {
     $next = [version]::new($base.Major + 1, 0, 0)
 } elseif ($feature) {
     $next = [version]::new($base.Major, $base.Minor + 1, 0)
 } else {
     $next = [version]::new($base.Major, $base.Minor, $base.Build + 1)
+}
+if ($next -lt $minVersion) {
+    $next = $minVersion
 }
 
 $breakingItems = @()

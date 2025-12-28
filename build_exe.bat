@@ -33,27 +33,33 @@ if /I "%MODE%"=="release" (
     where git >nul 2>&1 || (echo Git not found in PATH.& goto :error)
     where gh >nul 2>&1 || (echo GitHub CLI ^(gh^) not found in PATH.& goto :error)
     call :detect_github
+    echo Fetching tags...
+    git fetch --tags
+    if errorlevel 1 (
+        echo Failed to fetch tags.
+        goto :error
+    )
 )
 
 if /I "%MODE%"=="release" (
     call :compute_version_and_notes || goto :error
-    echo Next version: %NEXT_VERSION%
+    echo Next version: !NEXT_VERSION!
     if %DRY_RUN%==1 (
-        echo DRY RUN: would update %VERSION_FILE% to %NEXT_VERSION%.
+        echo DRY RUN: would update %VERSION_FILE% to !NEXT_VERSION!.
     ) else (
         call :update_version_file || goto :error
     )
 ) else if /I "%MODE%"=="dry-run" (
     set "RELEASE_NOTES=%TEMP%\SerrebiTorrent_release_notes.txt"
     call :compute_version_and_notes || goto :error
-    echo Next version: %NEXT_VERSION%
+    echo Next version: !NEXT_VERSION!
 ) else (
     call :read_current_version || goto :error
-    set "NEXT_VERSION=%CURRENT_VERSION%"
+    set "NEXT_VERSION=!CURRENT_VERSION!"
 )
 
 if %DRY_RUN%==1 (
-    echo DRY RUN: would build, sign, and zip version %NEXT_VERSION%.
+    echo DRY RUN: would build, sign, and zip version !NEXT_VERSION!.
     if /I "%MODE%"=="release" (
         echo DRY RUN: would create manifest, commit, tag, push, and create GitHub release.
     )
@@ -65,6 +71,20 @@ echo Cleaning previous build artifacts...
 taskkill /F /IM %EXE_NAME% /T >nul 2>&1
 if exist build rd /s /q build
 if exist dist rd /s /q dist
+if exist build (
+    powershell -NoProfile -Command "Remove-Item -Recurse -Force 'build'" >nul 2>&1
+)
+if exist dist (
+    powershell -NoProfile -Command "Remove-Item -Recurse -Force 'dist'" >nul 2>&1
+)
+if exist build (
+    echo Failed to delete build directory.
+    goto :error
+)
+if exist dist (
+    echo Failed to delete dist directory.
+    goto :error
+)
 
 echo Running PyInstaller...
 pyinstaller SerrebiTorrent.spec --noconfirm
@@ -103,7 +123,10 @@ popd
 exit /b 0
 
 :read_current_version
-for /f "tokens=3 delims= " %%A in ('findstr /b /c:"APP_VERSION" "%VERSION_FILE%"') do set "CURRENT_VERSION=%%~A"
+set "CURRENT_VERSION="
+for /f "tokens=2 delims==" %%A in ('findstr /b /c:"APP_VERSION" "%VERSION_FILE%"') do set "CURRENT_VERSION=%%A"
+set "CURRENT_VERSION=!CURRENT_VERSION:"=!"
+set "CURRENT_VERSION=!CURRENT_VERSION: =!"
 if "%CURRENT_VERSION%"=="" (
     echo Failed to read APP_VERSION from %VERSION_FILE%.
     exit /b 1
@@ -111,7 +134,7 @@ if "%CURRENT_VERSION%"=="" (
 exit /b 0
 
 :update_version_file
-powershell -NoProfile -Command "(Get-Content '%VERSION_FILE%') -replace '^APP_VERSION\\s*=.*','APP_VERSION = \"%NEXT_VERSION%\"' | Set-Content '%VERSION_FILE%'"
+powershell -NoProfile -Command "(Get-Content '%VERSION_FILE%') -replace '^APP_VERSION\\s*=.*','APP_VERSION = \"%NEXT_VERSION%\"' | Set-Content '%VERSION_FILE%' -Encoding ASCII"
 if errorlevel 1 (
     echo Failed to update %VERSION_FILE%.
     exit /b 1
@@ -130,7 +153,7 @@ exit /b 0
 :create_manifest
 set "MANIFEST_PATH=%CD%\dist\%MANIFEST_NAME%"
 set "DOWNLOAD_URL=https://github.com/%GITHUB_OWNER%/%GITHUB_REPO%/releases/download/v%NEXT_VERSION%/%ZIP_NAME%"
-powershell -NoProfile -Command "$hash = (Get-FileHash -Algorithm SHA256 '%ZIP_PATH%').Hash; $notes = Get-Content '%RELEASE_NOTES%' -Raw; $manifest = @{ version='%NEXT_VERSION%'; asset_filename='%ZIP_NAME%'; download_url='%DOWNLOAD_URL%'; sha256=$hash; published_at=(Get-Date -AsUTC -Format o); notes_summary=$notes }; $manifest | ConvertTo-Json -Depth 4 | Set-Content '%MANIFEST_PATH%' -Encoding UTF8"
+powershell -NoProfile -Command "$zipPath = '%ZIP_PATH%'; $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($zipPath))).Replace('-','').ToLower(); $notes = Get-Content '%RELEASE_NOTES%' -Raw; $manifest = @{ version='%NEXT_VERSION%'; asset_filename='%ZIP_NAME%'; download_url='%DOWNLOAD_URL%'; sha256=$sha; published_at=(Get-Date).ToUniversalTime().ToString('o'); notes_summary=$notes }; $manifest | ConvertTo-Json -Depth 4 | Set-Content '%MANIFEST_PATH%' -Encoding UTF8"
 if errorlevel 1 (
     echo Failed to create update manifest.
     exit /b 1
@@ -139,10 +162,15 @@ exit /b 0
 
 :git_commit_tag_push
 git add "%VERSION_FILE%"
-git commit -m "chore(release): v%NEXT_VERSION%"
+git diff --cached --quiet
 if errorlevel 1 (
-    echo Git commit failed.
-    exit /b 1
+    git commit -m "chore(release): v%NEXT_VERSION%"
+    if errorlevel 1 (
+        echo Git commit failed.
+        exit /b 1
+    )
+) else (
+    echo No version change to commit.
 )
 git tag "v%NEXT_VERSION%"
 if errorlevel 1 (
@@ -175,7 +203,7 @@ if errorlevel 1 (
 exit /b 0
 
 :detect_github
-for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$url = git remote get-url origin 2>$null; if ($url -match 'github.com[:/](.+?)/(.+?)(\.git)?$') { Write-Output \"GITHUB_OWNER=$($matches[1])\"; Write-Output \"GITHUB_REPO=$($matches[2])\" }"`) do set "%%A"
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -File "tools\get_github.ps1"`) do set "%%A"
 exit /b 0
 
 :usage

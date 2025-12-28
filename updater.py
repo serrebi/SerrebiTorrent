@@ -200,11 +200,20 @@ def find_app_dir(staging_dir: str, exe_name: str = APP_EXE_NAME) -> Optional[str
 
 
 def verify_authenticode(exe_path: str) -> None:
+    module_paths = []
+    for candidate in (
+        r"C:\Program Files\WindowsPowerShell\Modules",
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\Modules",
+    ):
+        if os.path.isdir(candidate):
+            module_paths.append(candidate)
+    module_path = ";".join(module_paths)
     cmd = [
         "powershell",
         "-NoProfile",
         "-Command",
         (
+            f"$env:PSModulePath='{module_path}'; "
             "Get-AuthenticodeSignature -FilePath "
             f"'{exe_path}' | Select-Object -Property Status,StatusMessage | ConvertTo-Json"
         ),
