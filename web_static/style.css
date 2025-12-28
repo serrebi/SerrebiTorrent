@@ -220,6 +220,8 @@ body {
 
 .progress-bar {
     background-color: #3498db;
+    color: #000;
+    font-weight: 600;
 }
 
 /* Custom classes for uTorrent look */

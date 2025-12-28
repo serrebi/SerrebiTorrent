@@ -42,17 +42,19 @@ hiddenimports += collect_submodules('certifi')
 # Project submodules
 local_modules = [
     'app_paths',
+    'app_version',
     'clients',
     'config_manager',
     'libtorrent_env',
     'rss_manager',
     'session_manager',
     'torrent_creator',
+    'updater',
     'web_server',
 ]
 hiddenimports += local_modules
 
-datas = [('web_static', 'web_static')]
+datas = [('web_static', 'web_static'), ('update_helper.bat', '.')]
 datas += collect_data_files('flask')
 
 a = Analysis(

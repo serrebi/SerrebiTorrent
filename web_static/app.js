@@ -38,6 +38,12 @@ window.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    document.querySelectorAll('.modal').forEach((modal) => {
+        modal.setAttribute('inert', '');
+        modal.addEventListener('show.bs.modal', () => modal.removeAttribute('inert'));
+        modal.addEventListener('hidden.bs.modal', () => modal.setAttribute('inert', ''));
+    });
+
     // Initial fetch
     refreshData(true);
     if (window.fetchProfiles) window.fetchProfiles(); 

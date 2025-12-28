@@ -13,6 +13,7 @@
     <div class="app-container">
         <!-- Top Toolbar (uTorrent Style) -->
         <header class="navbar navbar-light sticky-top shadow-sm" role="banner">
+            <h1 class="visually-hidden">SerrebiTorrent</h1>
             <div class="d-flex align-items-center w-100">
                 <a class="navbar-brand px-2" href="#">SerrebiTorrent</a>
                 
@@ -87,7 +88,7 @@
                             <table class="table table-sm" id="torrentTable" role="grid" aria-readonly="true" aria-label="torrents" aria-rowcount="-1" style="position: sticky; top: 0;">
                                 <thead role="rowgroup">
                                     <tr role="row">
-                                        <th scope="col" style="width: 40px;" role="columnheader"></th>
+                                        <th scope="col" style="width: 40px;" role="columnheader"><span class="visually-hidden">Select</span></th>
                                         <th scope="col" role="columnheader">Name</th>
                                         <th scope="col" role="columnheader">Size</th>
                                         <th scope="col" role="columnheader">Status</th>
@@ -105,17 +106,17 @@
                     <!-- Bottom: Details Panel -->
                     <section class="details-pane shadow-sm border-top" aria-label="Torrent Details">
                         <ul class="nav nav-tabs" id="detailTabs" role="tablist">
-                            <li class="nav-item">
-                                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#details-general" type="button">General</button>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="general-tab" data-bs-toggle="tab" data-bs-target="#details-general" type="button" role="tab" aria-selected="true" aria-controls="details-general">General</button>
                             </li>
-                            <li class="nav-item">
-                                <button class="nav-link" id="files-tab" data-bs-toggle="tab" data-bs-target="#details-files" type="button">Files</button>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="files-tab" data-bs-toggle="tab" data-bs-target="#details-files" type="button" role="tab" aria-selected="false" aria-controls="details-files">Files</button>
                             </li>
-                            <li class="nav-item">
-                                <button class="nav-link" id="peers-tab" data-bs-toggle="tab" data-bs-target="#details-peers" type="button">Peers</button>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="peers-tab" data-bs-toggle="tab" data-bs-target="#details-peers" type="button" role="tab" aria-selected="false" aria-controls="details-peers">Peers</button>
                             </li>
-                            <li class="nav-item">
-                                <button class="nav-link" id="trackers-tab" data-bs-toggle="tab" data-bs-target="#details-trackers" type="button">Trackers</button>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="trackers-tab" data-bs-toggle="tab" data-bs-target="#details-trackers" type="button" role="tab" aria-selected="false" aria-controls="details-trackers">Trackers</button>
                             </li>
                         </ul>
                         <div class="tab-content h-100 overflow-auto" id="detailTabsContent">
@@ -133,19 +134,19 @@
                         <div class="dropup">
                             <button class="btn btn-sm btn-primary me-2 dropdown-toggle" id="torrentActionsBtn" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Torrent Actions</button>
                             <ul class="dropdown-menu shadow" id="contextMenu" role="menu" aria-label="Torrent actions" tabindex="-1">
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Start</button></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('pause')">Pause</button></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Resume</button></li>
-                                <li><hr class="dropdown-divider" role="separator"></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('recheck')">Force Recheck</button></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('reannounce')">Force Reannounce</button></li>
-                                <li><hr class="dropdown-divider" role="separator"></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="copyToClipboard('hash')">Copy Info Hash</button></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="copyToClipboard('magnet')">Copy Magnet Link</button></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('openfolder')">Open Download Folder</button></li>
-                                <li><hr class="dropdown-divider" role="separator"></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('delete')">Remove</button></li>
-                                <li><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('delete', true)">Remove with Data</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Start</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('pause')">Pause</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('resume')">Resume</button></li>
+                                <li role="presentation"><hr class="dropdown-divider" role="separator"></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('recheck')">Force Recheck</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('reannounce')">Force Reannounce</button></li>
+                                <li role="presentation"><hr class="dropdown-divider" role="separator"></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="copyToClipboard('hash')">Copy Info Hash</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="copyToClipboard('magnet')">Copy Magnet Link</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('openfolder')">Open Download Folder</button></li>
+                                <li role="presentation"><hr class="dropdown-divider" role="separator"></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('delete')">Remove</button></li>
+                                <li role="presentation"><button class="dropdown-item" type="button" role="menuitem" onclick="doAction('delete', true)">Remove with Data</button></li>
                             </ul>
                         </div>
                         <button class="btn btn-sm btn-outline-secondary me-3" id="selectAllBtn" onclick="toggleSelectAllBtn()">Select All</button>
@@ -160,7 +161,7 @@
     </div>
 
     <!-- Add Profile Modal -->
-    <div class="modal fade" id="addProfileModal" tabindex="-1" aria-labelledby="addProfileModalLabel" aria-hidden="true">
+    <div class="modal fade" id="addProfileModal" tabindex="-1" aria-labelledby="addProfileModalLabel" inert>
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
@@ -202,7 +203,7 @@
     </div>
 
     <!-- Add Torrent Modal -->
-    <div class="modal fade" id="addTorrentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal fade" id="addTorrentModal" tabindex="-1" inert>
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
@@ -231,7 +232,7 @@
     </div>
 
     <!-- Settings Modal -->
-    <div class="modal fade" id="settingsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal fade" id="settingsModal" tabindex="-1" inert>
         <div class="modal-dialog modal-xl">
             <div class="modal-content">
                 <div class="modal-header">
@@ -240,14 +241,14 @@
                 </div>
                 <div class="modal-body p-0">
                     <ul class="nav nav-tabs px-3 pt-2" id="settingsTabs" role="tablist">
-                        <li class="nav-item">
-                            <button class="nav-link active" id="app-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-app" type="button">Application</button>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="app-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-app" type="button" role="tab" aria-selected="true" aria-controls="settings-app">Application</button>
                         </li>
-                        <li class="nav-item">
-                            <button class="nav-link" id="remote-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-remote" type="button">Remote Client</button>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="remote-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-remote" type="button" role="tab" aria-selected="false" aria-controls="settings-remote">Remote Client</button>
                         </li>
-                        <li class="nav-item">
-                            <button class="nav-link" id="web-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-web" type="button">Web UI</button>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="web-settings-tab" data-bs-toggle="tab" data-bs-target="#settings-web" type="button" role="tab" aria-selected="false" aria-controls="settings-web">Web UI</button>
                         </li>
                     </ul>
                     <div class="tab-content p-4">

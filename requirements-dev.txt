@@ -1,0 +1,8 @@
+axe-playwright-python
+hypothesis
+pytest
+pytest-playwright
+ruff
+mypy
+bandit
+pip-audit

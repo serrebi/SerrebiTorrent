@@ -1,0 +1,42 @@
+import json
+
+import pytest
+
+import config_manager
+
+
+def _configure_paths(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    legacy_path = tmp_path / "legacy_config.json"
+    monkeypatch.setattr(config_manager, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(config_manager, "LEGACY_CONFIG_FILE", str(legacy_path))
+    return config_path, legacy_path
+
+
+def test_load_config_handles_corrupt_json(tmp_path, monkeypatch):
+    config_path, _ = _configure_paths(tmp_path, monkeypatch)
+    config_path.write_text("{bad json", encoding="utf-8")
+    cm = config_manager.ConfigManager()
+    prefs = cm.get_preferences()
+    assert "download_path" in prefs
+    assert cm.get_profiles()
+
+
+def test_load_config_migrates_legacy(tmp_path, monkeypatch):
+    config_path, legacy_path = _configure_paths(tmp_path, monkeypatch)
+    legacy_path.write_text(
+        json.dumps({"preferences": {"download_path": "C:\\Downloads"}, "profiles": {}}),
+        encoding="utf-8",
+    )
+    cm = config_manager.ConfigManager()
+    assert cm.get_preferences().get("download_path") == "C:\\Downloads"
+    assert config_path.exists()
+
+
+def test_normalize_prefs_missing_keys(tmp_path, monkeypatch):
+    config_path, _ = _configure_paths(tmp_path, monkeypatch)
+    config_path.write_text(json.dumps({"preferences": {"download_path": "C:\\X"}, "profiles": {}}), encoding="utf-8")
+    cm = config_manager.ConfigManager()
+    prefs = cm.get_preferences()
+    assert prefs.get("download_path") == "C:\\X"
+    assert "web_ui_port" in prefs

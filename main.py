@@ -1,8 +1,10 @@
 import wx
 import sys
 import os
+import shutil
 import subprocess
 from collections import OrderedDict
+import time
 
 from libtorrent_env import prepare_libtorrent_dlls
 
@@ -19,7 +21,9 @@ from config_manager import ConfigManager
 from session_manager import SessionManager
 from rss_manager import RSSManager
 import web_server
+import updater
 from torrent_creator import CreateTorrentDialog, create_torrent_bytes
+from torrent_parsing import parse_magnet_infohash, safe_torrent_info_hash
 
 
 # Constants for List Columns
@@ -858,6 +862,10 @@ class PreferencesDialog(wx.Dialog):
         self.close_tray_chk = wx.CheckBox(general_panel, label="Close to System Tray")
         self.close_tray_chk.SetValue(self.prefs.get('close_to_tray', True))
         gen_sizer.Add(self.close_tray_chk, 0, wx.ALL, 5)
+
+        self.auto_update_chk = wx.CheckBox(general_panel, label="Check for updates automatically on startup")
+        self.auto_update_chk.SetValue(self.prefs.get('auto_check_updates', True))
+        gen_sizer.Add(self.auto_update_chk, 0, wx.ALL, 5)
         
         general_panel.SetSizer(gen_sizer)
         notebook.AddPage(general_panel, "General")
@@ -1054,6 +1062,7 @@ class PreferencesDialog(wx.Dialog):
             "auto_start": self.auto_start_chk.GetValue(),
             "min_to_tray": self.min_tray_chk.GetValue(),
             "close_to_tray": self.close_tray_chk.GetValue(),
+            "auto_check_updates": self.auto_update_chk.GetValue() if hasattr(self, "auto_update_chk") else self.prefs.get("auto_check_updates", True),
             "dl_limit": self.dl_limit.GetValue(),
             "ul_limit": self.ul_limit.GetValue(),
             "max_connections": self.max_conn.GetValue(),
@@ -2196,6 +2205,9 @@ class MainFrame(wx.Frame):
         self.pending_hash_starts = set()
         self.pending_cli_arg = None
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self.update_check_in_progress = False
+        self.update_install_in_progress = False
+        self._auto_update_calllater = None
         self.refreshing = False
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_timer, self.timer)
@@ -2273,6 +2285,7 @@ class MainFrame(wx.Frame):
 
         # Attempt auto-connect
         wx.CallAfter(self.try_auto_connect)
+        self._schedule_auto_update_check()
 
     def show_from_tray(self):
         if not self.IsShown():
@@ -2371,6 +2384,7 @@ class MainFrame(wx.Frame):
         tools_menu = wx.Menu()
         prefs_item = tools_menu.Append(wx.ID_PREFERENCES, "&Preferences...\tCtrl+,", "Configure application settings")
         assoc_item = tools_menu.Append(wx.ID_ANY, "Register &Associations", "Associate .torrent and magnet links with this app")
+        update_item = tools_menu.Append(wx.ID_ANY, "Check for &Updates...\tF5", "Check for updates")
         tools_menu.AppendSeparator()
         
         self.qbit_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&qBittorrent Remote Preferences", "Edit connected qBittorrent settings")
@@ -2409,6 +2423,7 @@ class MainFrame(wx.Frame):
 
         # Tools menu extras.
         self.Bind(wx.EVT_MENU, lambda e: register_associations(), assoc_item)
+        self.Bind(wx.EVT_MENU, self.on_check_updates, update_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.qbit_remote_prefs_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.trans_remote_prefs_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.rtorrent_remote_prefs_item)
@@ -2482,6 +2497,136 @@ class MainFrame(wx.Frame):
             except Exception as e:
                 print(f"Error starting Web UI: {e}")
 
+    def _schedule_auto_update_check(self):
+        prefs = self.config_manager.get_preferences()
+        if self._auto_update_calllater:
+            try:
+                self._auto_update_calllater.Stop()
+            except Exception:
+                pass
+            self._auto_update_calllater = None
+        if prefs.get("auto_check_updates", True):
+            self._auto_update_calllater = wx.CallLater(3000, self.check_for_updates, False)
+
+    def on_check_updates(self, event):
+        self.check_for_updates(True)
+
+    def check_for_updates(self, manual=False):
+        if self.update_check_in_progress or self.update_install_in_progress:
+            if manual:
+                wx.MessageBox("An update check or install is already in progress.", "Updates", wx.OK | wx.ICON_INFORMATION)
+            return
+        self.update_check_in_progress = True
+        if hasattr(self, "statusbar"):
+            self.statusbar.SetStatusText("Checking for updates...", 0)
+        self.thread_pool.submit(self._check_updates_background, manual)
+
+    def _check_updates_background(self, manual):
+        try:
+            info = updater.check_for_update()
+            if info is None:
+                wx.CallAfter(self._on_no_update_available, manual)
+            else:
+                wx.CallAfter(self._prompt_update, info)
+        except updater.RateLimitError as e:
+            wx.CallAfter(self._on_update_check_failed, str(e), manual)
+        except Exception as e:
+            wx.CallAfter(self._on_update_check_failed, f"Update check failed: {e}", manual)
+        finally:
+            self.update_check_in_progress = False
+
+    def _on_no_update_available(self, manual):
+        if manual:
+            wx.MessageBox("You're already on the latest version.", "Updates", wx.OK | wx.ICON_INFORMATION)
+        if hasattr(self, "statusbar"):
+            self.statusbar.SetStatusText("No updates available.", 0)
+
+    def _on_update_check_failed(self, message, manual):
+        if manual:
+            wx.MessageBox(message, "Update Check Failed", wx.OK | wx.ICON_ERROR)
+        if hasattr(self, "statusbar"):
+            self.statusbar.SetStatusText("Update check failed.", 0)
+
+    def _prompt_update(self, info):
+        message = f"A new version of {APP_NAME} is available.\n\n{updater.build_update_prompt(info)}"
+        if wx.MessageBox(message, "Update Available", wx.YES_NO | wx.ICON_INFORMATION) != wx.YES:
+            if hasattr(self, "statusbar"):
+                self.statusbar.SetStatusText("Update postponed.", 0)
+            return
+        self._start_update_install(info)
+
+    def _start_update_install(self, info):
+        if self.update_install_in_progress:
+            wx.MessageBox("An update is already in progress.", "Updates", wx.OK | wx.ICON_INFORMATION)
+            return
+        if not getattr(sys, "frozen", False):
+            wx.MessageBox("Updates are only available in the packaged app.", "Updates", wx.OK | wx.ICON_WARNING)
+            return
+        install_dir = os.path.dirname(sys.executable)
+        if not os.path.isdir(install_dir):
+            wx.MessageBox("Install directory not found.", "Updates", wx.OK | wx.ICON_ERROR)
+            return
+        self.update_install_in_progress = True
+        if hasattr(self, "statusbar"):
+            self.statusbar.SetStatusText("Downloading update...", 0)
+        self.thread_pool.submit(self._perform_update_background, info, install_dir)
+
+    def _perform_update_background(self, info, install_dir):
+        try:
+            parent_dir = os.path.dirname(install_dir)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            staging_root = os.path.join(parent_dir, f"{APP_NAME}_Update_{timestamp}")
+            os.makedirs(staging_root, exist_ok=True)
+
+            zip_name = str(info.manifest.get("asset_filename") or f"{APP_NAME}-v{info.latest_version}.zip")
+            zip_path = os.path.join(staging_root, zip_name)
+            updater.download_file(str(info.manifest.get("download_url")), zip_path)
+
+            expected = str(info.manifest.get("sha256", "")).lower()
+            actual = updater.compute_sha256(zip_path).lower()
+            if expected != actual:
+                raise updater.UpdateError("Downloaded update failed SHA-256 verification.")
+
+            updater.extract_zip(zip_path, staging_root)
+            new_dir = updater.find_app_dir(staging_root)
+            if not new_dir:
+                raise updater.UpdateError("Extracted update does not contain application files.")
+            new_exe = os.path.join(new_dir, updater.APP_EXE_NAME)
+            if not os.path.isfile(new_exe):
+                raise updater.UpdateError("Updated executable not found.")
+
+            updater.verify_authenticode(new_exe)
+
+            helper_src = os.path.join(install_dir, "update_helper.bat")
+            if not os.path.isfile(helper_src):
+                raise updater.UpdateError("Update helper script not found in the install directory.")
+            helper_copy = os.path.join(staging_root, "update_helper.bat")
+            shutil.copy2(helper_src, helper_copy)
+
+            backup_dir = os.path.join(parent_dir, f"{APP_NAME}_Backup_{timestamp}")
+            cmd = ["cmd.exe", "/C", helper_copy, install_dir, new_dir, backup_dir, updater.APP_EXE_NAME]
+            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen(cmd, creationflags=flags)
+            wx.CallAfter(self._on_update_started)
+        except Exception as e:
+            wx.CallAfter(self._on_update_failed, str(e))
+
+    def _on_update_started(self):
+        if hasattr(self, "statusbar"):
+            self.statusbar.SetStatusText("Applying update...", 0)
+        wx.MessageBox(
+            "The update has been downloaded and verified. The app will now close to install it.",
+            "Updating",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        self.force_close()
+
+    def _on_update_failed(self, message):
+        self.update_install_in_progress = False
+        wx.MessageBox(f"Update failed: {message}", "Update Failed", wx.OK | wx.ICON_ERROR)
+        if hasattr(self, "statusbar"):
+            self.statusbar.SetStatusText("Update failed.", 0)
+
     def _update_remote_prefs_menu_state(self):
         # Enable specific remote preferences items based on connection
         is_qbit = isinstance(self.client, QBittorrentClient) and self.connected
@@ -2508,34 +2653,10 @@ class MainFrame(wx.Frame):
         self.pending_hash_starts = set()
 
     def _maybe_hash_from_torrent_bytes(self, data):
-        if lt:
-            try:
-                info = lt.torrent_info(data)
-                return str(info.info_hash())
-            except Exception:
-                return None
-        return None
+        return safe_torrent_info_hash(data)
 
     def _maybe_hash_from_magnet(self, url):
-        try:
-            import urllib.parse
-            parsed = urllib.parse.urlparse(url)
-            qs = urllib.parse.parse_qs(parsed.query)
-            xts = qs.get('xt', [])
-            for xt in xts:
-                if xt.startswith("urn:btih:"):
-                    return xt.split(":")[-1].lower()
-        except Exception:
-            pass
-
-        if lt:
-            try:
-                params = lt.parse_magnet_uri(url)
-                if params.info_hashes.has_v1():
-                    return str(params.info_hashes.v1)
-            except Exception:
-                pass
-        return None
+        return parse_magnet_infohash(url)
 
     def _add_torrent_file_background(self, client, generation, data, save_path, priorities, status_msg):
         try:
@@ -2635,6 +2756,7 @@ class MainFrame(wx.Frame):
                 wx.LogError(f"Failed to apply settings: {e}")
             self._update_client_default_save_path()
             self._update_web_ui()
+            self._schedule_auto_update_check()
             
             # Update RSS timer interval
             interval = prefs.get('rss_update_interval', 300)

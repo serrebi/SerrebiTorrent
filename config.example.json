@@ -28,6 +28,7 @@
         "auto_start": true,
         "min_to_tray": true,
         "close_to_tray": true,
+        "auto_check_updates": true,
         "enable_trackers": true,
         "tracker_url": "https://raw.githubusercontent.com/scriptzteam/BitTorrent-Tracker-List/refs/heads/main/trackers_best.txt",
         "proxy_type": 0,

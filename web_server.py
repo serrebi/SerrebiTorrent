@@ -241,15 +241,18 @@ def torrents_add():
     
     urls = request.form.get('urls')
     save_path = request.form.get('savepath')
+    errors = []
+    attempted = 0
     
     if urls:
         for url in urls.split('\n'):
             u = url.strip()
             if u:
                 try:
-                    client.add_torrent_url(u, save_path=save_path)
+                    attempted += 1
+                    client.add_torrent_url(u, sp=save_path)
                 except Exception as e:
-                    print(f"Error adding URL {u}: {e}")
+                    errors.append(f"URL {u}: {e}")
     
     if 'torrents' in request.files:
         files = request.files.getlist('torrents')
@@ -257,10 +260,15 @@ def torrents_add():
             content = f.read()
             if content:
                 try:
-                    client.add_torrent_file(content, save_path=save_path)
+                    attempted += 1
+                    client.add_torrent_file(content, sp=save_path)
                 except Exception as e:
-                    print(f"Error adding file {f.filename}: {e}")
+                    errors.append(f"File {f.filename}: {e}")
                 
+    if attempted == 0:
+        return "No torrents provided", 400
+    if errors:
+        return "Failed to add torrents: " + "; ".join(errors), 500
     return "Ok."
 
 @app.route('/api/v2/rss/feeds')

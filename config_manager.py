@@ -44,6 +44,7 @@ DEFAULT_PREFERENCES: Dict[str, Any] = {
     "auto_start": True,
     "min_to_tray": True,
     "close_to_tray": True,
+    "auto_check_updates": True,
     "enable_trackers": True,
     "tracker_url": "https://raw.githubusercontent.com/scriptzteam/BitTorrent-Tracker-List/refs/heads/main/trackers_best.txt",
     "rss_update_interval": 300,  # Default 5 minutes

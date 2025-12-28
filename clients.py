@@ -8,6 +8,14 @@ import os
 from app_paths import get_log_path
 from libtorrent_env import prepare_libtorrent_dlls
 
+def _safe_tracker_domain(tracker_url):
+    if not tracker_url:
+        return ""
+    try:
+        return urlparse(tracker_url).hostname or ""
+    except Exception:
+        return ""
+
 class BaseClient(abc.ABC):
     @abc.abstractmethod
     def test_connection(self):
@@ -34,19 +42,77 @@ class BaseClient(abc.ABC):
         pass
 
     def remove_torrents(self, hs, df=False):
-        if not hs:
+        hashes = self._normalize_hashes(hs)
+        if not hashes:
             return
-        if isinstance(hs, (str, bytes)):
-            hs = [hs.decode("utf-8","ignore") if isinstance(hs, bytes) else hs]
-
-        for h in hs:
-            if not h: continue
-            h = str(h).strip()
-            if not h: continue
-            if df:
+        delete_files = self._normalize_delete_files(df)
+        for h in hashes:
+            if not h:
+                continue
+            if delete_files:
                 self.remove_torrent_with_data(h)
             else:
                 self.remove_torrent(h)
+
+    def _normalize_hashes(self, hs):
+        if hs is None:
+            return []
+        if isinstance(hs, (str, bytes, bytearray, memoryview)):
+            hs = [hs]
+        out = []
+        for h in hs:
+            if h is None:
+                continue
+            normalized = self._normalize_hash(h)
+            if normalized:
+                out.append(normalized)
+        return out
+
+    def _normalize_hash(self, h):
+        if h is None:
+            return None
+        if isinstance(h, (bytes, bytearray, memoryview)):
+            raw = bytes(h)
+            if len(raw) == 20:
+                return binascii.hexlify(raw).decode("ascii")
+            try:
+                text = raw.decode("ascii")
+            except Exception:
+                return raw.decode("utf-8", "ignore").strip()
+            text = text.strip()
+            if text and all(c in "0123456789abcdefABCDEF" for c in text) and len(text) in (40, 64):
+                return text.lower()
+            return text
+        if hasattr(h, "to_string"):
+            try:
+                raw = h.to_string()
+                if isinstance(raw, (bytes, bytearray, memoryview)):
+                    raw_bytes = bytes(raw)
+                    if len(raw_bytes) == 20:
+                        return binascii.hexlify(raw_bytes).decode("ascii")
+                    try:
+                        text = raw_bytes.decode("ascii").strip()
+                    except Exception:
+                        return raw_bytes.decode("utf-8", "ignore").strip()
+                    if text and all(c in "0123456789abcdefABCDEF" for c in text) and len(text) in (40, 64):
+                        return text.lower()
+                    return text
+            except Exception:
+                pass
+        return str(h).strip()
+
+    def _normalize_delete_files(self, delete_files):
+        if isinstance(delete_files, bool):
+            return delete_files
+        if isinstance(delete_files, (int, float)):
+            return bool(delete_files)
+        if isinstance(delete_files, str):
+            value = delete_files.strip().lower()
+            if value in ("1", "true", "yes", "y", "on"):
+                return True
+            if value in ("0", "false", "no", "n", "off", ""):
+                return False
+        return bool(delete_files)
 
     @abc.abstractmethod
     def add_torrent_url(self, u, sp=None):
@@ -302,7 +368,8 @@ class QBittorrentClient(BaseClient):
                 if s in ['downloading', 'uploading', 'stalledDL', 'stalledUP', 'metaDL', 'forcedDL', 'forcedUP', 'queuedDL', 'queuedUP']: sv, av = 1, 1
                 elif s in ['pausedDL', 'pausedUP']: sv = 0
                 elif 'checking' in s: hv, sv = 1, 1
-                res.append({"hash": t.hash, "name": t.name, "size": t.total_size, "done": t.completed, "up_total": t.uploaded, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": "", "down_rate": t.dlspeed, "up_rate": t.upspeed, "tracker_domain": urlparse(t.tracker).hostname or "" if t.tracker else "", "eta": int(getattr(t, "eta", -1) or -1), "seeds_connected": int(getattr(t, "num_seeds", 0) or 0), "seeds_total": int(getattr(t, "num_complete", 0) or 0), "leechers_connected": int(getattr(t, "num_leechs", 0) or 0), "leechers_total": int(getattr(t, "num_incomplete", 0) or 0), "availability": getattr(t, "availability", None), "save_path": getattr(t, "save_path", None)})
+                tracker_domain = _safe_tracker_domain(getattr(t, "tracker", "") or "")
+                res.append({"hash": t.hash, "name": t.name, "size": t.total_size, "done": t.completed, "up_total": t.uploaded, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": "", "down_rate": t.dlspeed, "up_rate": t.upspeed, "tracker_domain": tracker_domain, "eta": int(getattr(t, "eta", -1) or -1), "seeds_connected": int(getattr(t, "num_seeds", 0) or 0), "seeds_total": int(getattr(t, "num_complete", 0) or 0), "leechers_connected": int(getattr(t, "num_leechs", 0) or 0), "leechers_total": int(getattr(t, "num_incomplete", 0) or 0), "availability": getattr(t, "availability", None), "save_path": getattr(t, "save_path", None)})
             return res
         except Exception as e:
             print(f"qBittorrent error: {e}")
@@ -359,7 +426,9 @@ class TransmissionClient(BaseClient):
                 if t.status == 'stopped': sv = 0
                 elif t.status in ['checking', 'check pending']: hv, sv = 1, 1
                 else: sv, av = 1, 1
-                res.append({"hash": t.hashString, "name": t.name, "size": t.total_size, "done": t.downloaded_ever, "up_total": t.uploaded_ever, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": t.error_string, "down_rate": t.rate_download, "up_rate": t.rate_upload, "tracker_domain": urlparse(t.trackers[0].announce).hostname or "" if t.trackers else "", "eta": int(getattr(t, "eta", -1)), "seeds_connected": t.peersSendingToUs, "seeds_total": t.seeders, "leechers_connected": t.peersGettingFromUs, "leechers_total": t.leechers, "availability": None, "save_path": getattr(t, "download_dir", None)})
+                tracker_url = t.trackers[0].announce if t.trackers else ""
+                tracker_domain = _safe_tracker_domain(tracker_url)
+                res.append({"hash": t.hashString, "name": t.name, "size": t.total_size, "done": t.downloaded_ever, "up_total": t.uploaded_ever, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": t.error_string, "down_rate": t.rate_download, "up_rate": t.rate_upload, "tracker_domain": tracker_domain, "eta": int(getattr(t, "eta", -1)), "seeds_connected": t.peersSendingToUs, "seeds_total": t.seeders, "leechers_connected": t.peersGettingFromUs, "leechers_total": t.leechers, "availability": None, "save_path": getattr(t, "download_dir", None)})
             return res
         except Exception as e:
             print(f"Transmission error: {e}")
@@ -444,7 +513,7 @@ class TransmissionClient(BaseClient):
             self.c.set_session(**mapping)
     def get_torrent_save_path(self, h):
         t = self.c.get_torrent(h)
-        return getattr(t, 'downloadDir', None)
+        return getattr(t, 'download_dir', None) or getattr(t, 'downloadDir', None)
     def get_files(self, h):
         t = self.c.get_torrent(h, arguments=['files', 'fileStats']); res = []
         for i, f in enumerate(t.files):
@@ -495,7 +564,8 @@ class LocalClient(BaseClient):
                     if hasattr(s, "distributed_copies"): ac = float(s.distributed_copies)
                     elif hasattr(s, "distributed_full_copies"): ac = float(s.distributed_full_copies) + (float(getattr(s, "distributed_fraction", 0)) / 1000.0)
                 except: pass
-                res.append({"hash": str(ihs), "name": str(s.name if s.name else ihs), "size": int(s.total_wanted), "done": int(s.total_wanted_done), "up_total": int(s.all_time_upload), "ratio": int(ratio), "state": int(sv), "active": int(av), "hashing": int(hv), "message": str(s.errc.message() if s.errc else ""), "down_rate": int(s.download_payload_rate), "up_rate": int(s.upload_payload_rate), "tracker_domain": str(urlparse(s.current_tracker).hostname or "" if s.current_tracker else ""), "save_path": str(getattr(s, 'save_path', None) or self._edp()), "eta": int(eta), "seeds_connected": int(getattr(s, 'num_seeds', 0)), "seeds_total": int(s.num_complete), "leechers_connected": int(max(0, int(getattr(s, 'num_peers', s.num_connections)) - int(getattr(s, 'num_seeds', 0)))), "leechers_total": int(s.num_incomplete), "availability": ac})
+                tracker_domain = _safe_tracker_domain(getattr(s, "current_tracker", "") or "")
+                res.append({"hash": str(ihs), "name": str(s.name if s.name else ihs), "size": int(s.total_wanted), "done": int(s.total_wanted_done), "up_total": int(s.all_time_upload), "ratio": int(ratio), "state": int(sv), "active": int(av), "hashing": int(hv), "message": str(s.errc.message() if s.errc else ""), "down_rate": int(s.download_payload_rate), "up_rate": int(s.upload_payload_rate), "tracker_domain": tracker_domain, "save_path": str(getattr(s, 'save_path', None) or self._edp()), "eta": int(eta), "seeds_connected": int(getattr(s, 'num_seeds', 0)), "seeds_total": int(s.num_complete), "leechers_connected": int(max(0, int(getattr(s, 'num_peers', s.num_connections)) - int(getattr(s, 'num_seeds', 0)))), "leechers_total": int(s.num_incomplete), "availability": ac})
             except: continue
         return res
     def start_torrent(self, h):

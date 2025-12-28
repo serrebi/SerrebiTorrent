@@ -45,6 +45,32 @@ class SessionManager:
         
         self.load_state()
 
+    def _info_hash_key(self, info_hashes):
+        if info_hashes is None:
+            return ""
+        try:
+            if hasattr(info_hashes, "has_v1") and info_hashes.has_v1():
+                return str(info_hashes.v1)
+            if hasattr(info_hashes, "has_v2") and info_hashes.has_v2():
+                return str(info_hashes.v2)
+        except Exception:
+            pass
+        try:
+            return str(info_hashes)
+        except Exception:
+            return ""
+
+    def _handle_hash_key(self, handle):
+        try:
+            if hasattr(handle, "info_hashes"):
+                return self._info_hash_key(handle.info_hashes())
+        except Exception:
+            pass
+        try:
+            return self._info_hash_key(handle.info_hash())
+        except Exception:
+            return ""
+
     def apply_preferences(self, prefs):
         # Proxy Mapping
         # 0=None, 1=SOCKS4, 2=SOCKS5, 3=HTTP
@@ -106,8 +132,8 @@ class SessionManager:
                         if isinstance(alert, lt.save_resume_data_alert):
                             self._handle_save_resume(alert)
                         elif isinstance(alert, lt.save_resume_data_failed_alert):
-                            if alert.params.info_hashes.has_v1():
-                                ih = str(alert.params.info_hashes.v1)
+                            ih = self._info_hash_key(alert.params.info_hashes)
+                            if ih:
                                 self.pending_saves.discard(ih)
                         elif isinstance(alert, lt.metadata_received_alert):
                             # ... handle metadata ...
@@ -126,17 +152,10 @@ class SessionManager:
         
         # Save to disk
         try:
-            # We need a unique ID. info_hash is good.
-            # add_torrent_params has info_hashes (v1/v2)
-            if not alert.params.info_hashes.has_v1():
-                # For now, we only support v1 hashes for filename mapping
+            ih = self._info_hash_key(alert.params.info_hashes)
+            if not ih:
                 return
-
-            ih = str(alert.params.info_hashes.v1)
-            
-            # Remove from pending set
-            if ih in self.pending_saves:
-                self.pending_saves.discard(ih)
+            self.pending_saves.discard(ih)
             
             path = os.path.join(self.state_dir, ih + '.resume')
             
@@ -150,7 +169,14 @@ class SessionManager:
 
     def add_torrent_file(self, file_content, save_path, file_priorities=None):
         info = lt.torrent_info(file_content)
-        ih = str(info.info_hash())
+        ih = ""
+        try:
+            if hasattr(info, "info_hashes"):
+                ih = self._info_hash_key(info.info_hashes())
+        except Exception:
+            ih = ""
+        if not ih:
+            ih = self._info_hash_key(info.info_hash())
         
         # Check if already exists
         if self._find_handle(ih):
@@ -172,10 +198,9 @@ class SessionManager:
         params.save_path = save_path
         
         # Check if already exists from magnet's hash
-        if params.info_hashes.has_v1():
-            ih = str(params.info_hashes.v1)
-            if self._find_handle(ih):
-                raise ValueError(f"Magnet with hash {ih} already exists.")
+        ih = self._info_hash_key(params.info_hashes)
+        if ih and self._find_handle(ih):
+            raise ValueError(f"Magnet with hash {ih} already exists.")
         
         # We should also save the magnet URI itself for robust restoration if metadata is not fetched quickly
         # Or let resume data handle it.
@@ -204,7 +229,9 @@ class SessionManager:
                              params.save_path = default_save_path
 
                         self.ses.add_torrent(params)
-                        loaded_hashes.add(str(params.info_hashes.v1))
+                        ih = self._info_hash_key(params.info_hashes)
+                        if ih:
+                            loaded_hashes.add(ih)
                     except Exception as e:
                         print(f"Error loading resume data for {f}: {e}")
                         # If resume data fails, try to load .torrent directly if it exists.
@@ -219,7 +246,16 @@ class SessionManager:
                                     # For simplicity, if resume data failed, we re-add as new, so save_path from profile.
                                     params = {'ti': info, 'save_path': default_save_path} 
                                     self.ses.add_torrent(params)
-                                    loaded_hashes.add(str(info.info_hash()))
+                                    ih = ""
+                                    try:
+                                        if hasattr(info, "info_hashes"):
+                                            ih = self._info_hash_key(info.info_hashes())
+                                    except Exception:
+                                        ih = ""
+                                    if not ih:
+                                        ih = self._info_hash_key(info.info_hash())
+                                    if ih:
+                                        loaded_hashes.add(ih)
                                     print(f"Successfully loaded {ih_from_resume}.torrent after resume data failure using default path.")
                             except Exception as tf_e:
                                 print(f"Failed to load .torrent file {torrent_file_path} as fallback: {tf_e}")
@@ -250,8 +286,9 @@ class SessionManager:
         count = 0
         for h in handles:
             if h.is_valid():
-                ih = str(h.info_hash())
-                self.pending_saves.add(ih)
+                ih = self._handle_hash_key(h)
+                if ih:
+                    self.pending_saves.add(ih)
                 h.save_resume_data(lt.resume_data_flags_t.flush_disk_cache)
                 count += 1
         
@@ -270,7 +307,7 @@ class SessionManager:
 
     def _find_handle(self, info_hash_str):
         for h in self.ses.get_torrents():
-             if str(h.info_hash()) == info_hash_str:
+             if self._handle_hash_key(h) == info_hash_str:
                  return h
         return None
 
