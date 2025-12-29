@@ -8,7 +8,7 @@ import re
 import subprocess
 import zipfile
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 import requests
 
@@ -23,6 +23,38 @@ API_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 60
 
 _SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _normalize_thumbprint(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return value.replace(" ", "").strip().upper()
+
+
+def _normalize_thumbprints(values: Iterable[str]) -> Tuple[str, ...]:
+    normalized = {_normalize_thumbprint(value) for value in values if value}
+    normalized.discard("")
+    return tuple(sorted(normalized))
+
+
+def _env_thumbprints() -> Tuple[str, ...]:
+    raw = os.environ.get("SERREBITORRENT_TRUSTED_SIGNING_THUMBPRINTS", "")
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _extract_manifest_thumbprints(manifest: Dict[str, Any]) -> Tuple[str, ...]:
+    raw = manifest.get("signing_thumbprints") or manifest.get("signing_thumbprint")
+    if isinstance(raw, str):
+        return (raw,)
+    if isinstance(raw, list):
+        return tuple(str(item).strip() for item in raw if item)
+    return ()
+
+
+def get_allowed_thumbprints(manifest: Dict[str, Any]) -> Tuple[str, ...]:
+    return _normalize_thumbprints(list(_extract_manifest_thumbprints(manifest)) + list(_env_thumbprints()))
 
 
 class UpdateError(Exception):
@@ -199,7 +231,8 @@ def find_app_dir(staging_dir: str, exe_name: str = APP_EXE_NAME) -> Optional[str
     return None
 
 
-def verify_authenticode(exe_path: str) -> None:
+def verify_authenticode(exe_path: str, allowed_thumbprints: Iterable[str]) -> None:
+    allowed = set(_normalize_thumbprints(allowed_thumbprints))
     module_paths = []
     for candidate in (
         r"C:\Program Files\WindowsPowerShell\Modules",
@@ -215,7 +248,7 @@ def verify_authenticode(exe_path: str) -> None:
         (
             f"$env:PSModulePath='{module_path}'; "
             "Get-AuthenticodeSignature -FilePath "
-            f"'{exe_path}' | Select-Object -Property Status,StatusMessage | ConvertTo-Json"
+            f"'{exe_path}' | Select-Object -Property Status,StatusMessage,@{n='Thumbprint';e={$_.SignerCertificate.Thumbprint}} | ConvertTo-Json"
         ),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -225,10 +258,17 @@ def verify_authenticode(exe_path: str) -> None:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise UpdateError("Signature verification did not return valid JSON.") from exc
-    status = str(data.get("Status", ""))
+    status = str(data.get("Status", "")).strip()
+    status_msg = str(data.get("StatusMessage", "")).strip()
+    thumbprint = _normalize_thumbprint(data.get("Thumbprint"))
     if status.lower() != "valid":
-        msg = data.get("StatusMessage", "Unknown signature status.")
-        raise UpdateError(f"Authenticode signature is not valid: {msg}")
+        if thumbprint and thumbprint in allowed:
+            return
+        msg = status_msg or "Unknown signature status."
+        detail = f"Authenticode signature is not valid: {msg}".strip()
+        if thumbprint:
+            detail = f"{detail} (thumbprint {thumbprint})"
+        raise UpdateError(detail)
 
 
 def build_update_prompt(info: UpdateInfo) -> str:

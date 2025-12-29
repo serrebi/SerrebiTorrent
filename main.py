@@ -2595,7 +2595,7 @@ class MainFrame(wx.Frame):
             if not os.path.isfile(new_exe):
                 raise updater.UpdateError("Updated executable not found.")
 
-            updater.verify_authenticode(new_exe)
+            updater.verify_authenticode(new_exe, updater.get_allowed_thumbprints(info.manifest))
 
             helper_src = os.path.join(install_dir, "update_helper.bat")
             if not os.path.isfile(helper_src):

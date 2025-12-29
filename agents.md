@@ -38,9 +38,12 @@
 - If you rebrand the EXE, update the `.spec` file and any doc references. Remember to refresh the tray icon (`icon.ico`) if you change branding.
 
 ## Ops notes
-- Local mode needs the OpenSSL DLLs in `PATH`; `libtorrent_env.py` already injects both the repo root and Python’s `DLLs` directory. Don’t delete that helper.
+- Local mode needs the OpenSSL DLLs in `PATH`; `libtorrent_env.py` already injects both the repo root and Python's `DLLs` directory. Don't delete that helper.
 - Connection profiles, preferences, session state, and logs write to `SerrebiTorrent_Data` (portable mode) or per-user app data (installed mode).
 - Accessibility shortcuts are hard-coded in `MainFrame.__init__`. Update README if you touch them.
 - If you must run tests, there are no automated suites. Launch `python main.py` and exercise the UI manually.
+
+## Update notes
+- The updater accepts a `signing_thumbprint` value in the release manifest so self-signed Authenticode signatures can be trusted when Windows reports UnknownError.
 
 Keep edits lean, comment only when code is not self-explanatory, and leave user-facing docs in README.md. Everything technical goes here.

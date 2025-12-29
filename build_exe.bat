@@ -100,6 +100,12 @@ echo Signing %EXE_NAME%...
 "%SIGNTOOL_PATH%" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a ".\%EXE_NAME%"
 if errorlevel 1 (popd & goto :error)
 popd
+set "SIGNING_THUMBPRINT="
+if defined SIGN_CERT_THUMBPRINT (
+    set "SIGNING_THUMBPRINT=%SIGN_CERT_THUMBPRINT%"
+) else (
+    for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$sig = Get-AuthenticodeSignature -LiteralPath 'dist\\%APP_NAME%\\%EXE_NAME%'; if ($sig.SignerCertificate) { $sig.SignerCertificate.Thumbprint }"`) do set "SIGNING_THUMBPRINT=%%A"
+)
 
 set "ZIP_NAME=%APP_NAME%-v%NEXT_VERSION%.zip"
 set "ZIP_PATH=%CD%\dist\%ZIP_NAME%"
@@ -153,7 +159,7 @@ exit /b 0
 :create_manifest
 set "MANIFEST_PATH=%CD%\dist\%MANIFEST_NAME%"
 set "DOWNLOAD_URL=https://github.com/%GITHUB_OWNER%/%GITHUB_REPO%/releases/download/v%NEXT_VERSION%/%ZIP_NAME%"
-powershell -NoProfile -Command "$zipPath = '%ZIP_PATH%'; $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($zipPath))).Replace('-','').ToLower(); $notes = Get-Content '%RELEASE_NOTES%' -Raw; $manifest = @{ version='%NEXT_VERSION%'; asset_filename='%ZIP_NAME%'; download_url='%DOWNLOAD_URL%'; sha256=$sha; published_at=(Get-Date).ToUniversalTime().ToString('o'); notes_summary=$notes }; $manifest | ConvertTo-Json -Depth 4 | Set-Content '%MANIFEST_PATH%' -Encoding UTF8"
+powershell -NoProfile -Command "$zipPath = '%ZIP_PATH%'; $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($zipPath))).Replace('-','').ToLower(); $notes = Get-Content '%RELEASE_NOTES%' -Raw; $manifest = @{ version='%NEXT_VERSION%'; asset_filename='%ZIP_NAME%'; download_url='%DOWNLOAD_URL%'; sha256=$sha; published_at=(Get-Date).ToUniversalTime().ToString('o'); notes_summary=$notes }; $thumb = '%SIGNING_THUMBPRINT%'; if ($thumb) { $manifest.signing_thumbprint = $thumb }; $manifest | ConvertTo-Json -Depth 4 | Set-Content '%MANIFEST_PATH%' -Encoding UTF8"
 if errorlevel 1 (
     echo Failed to create update manifest.
     exit /b 1
