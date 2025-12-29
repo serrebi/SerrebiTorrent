@@ -104,8 +104,12 @@ set "SIGNING_THUMBPRINT="
 if defined SIGN_CERT_THUMBPRINT (
     set "SIGNING_THUMBPRINT=%SIGN_CERT_THUMBPRINT%"
 ) else (
-    for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "$sig = Get-AuthenticodeSignature -LiteralPath 'dist\\%APP_NAME%\\%EXE_NAME%'; if ($sig.SignerCertificate) { $sig.SignerCertificate.Thumbprint }"`) do set "SIGNING_THUMBPRINT=%%A"
+    set "SIGNING_THUMBPRINT_FILE=%TEMP%\\SerrebiTorrent_thumbprint.txt"
+    python -c "import re, subprocess, pathlib; exe=r'%CD%\\dist\\%APP_NAME%\\%EXE_NAME%'; tool=r'%SIGNTOOL_PATH%'; result=subprocess.run([tool,'verify','/pa','/v',exe], capture_output=True, text=True); data=(result.stdout or '') + (result.stderr or ''); m=re.search(r'SHA1 hash:\s*([0-9A-Fa-f]{40})', data); pathlib.Path(r'!SIGNING_THUMBPRINT_FILE!').write_text(m.group(1) if m else '')"
+    if exist "!SIGNING_THUMBPRINT_FILE!" set /p SIGNING_THUMBPRINT=<"!SIGNING_THUMBPRINT_FILE!"
+    if exist "!SIGNING_THUMBPRINT_FILE!" del /f /q "!SIGNING_THUMBPRINT_FILE!" >nul 2>&1
 )
+if defined SIGNING_THUMBPRINT set "SIGNING_THUMBPRINT=!SIGNING_THUMBPRINT: =!"
 
 set "ZIP_NAME=%APP_NAME%-v%NEXT_VERSION%.zip"
 set "ZIP_PATH=%CD%\dist\%ZIP_NAME%"
@@ -159,7 +163,7 @@ exit /b 0
 :create_manifest
 set "MANIFEST_PATH=%CD%\dist\%MANIFEST_NAME%"
 set "DOWNLOAD_URL=https://github.com/%GITHUB_OWNER%/%GITHUB_REPO%/releases/download/v%NEXT_VERSION%/%ZIP_NAME%"
-powershell -NoProfile -Command "$zipPath = '%ZIP_PATH%'; $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($zipPath))).Replace('-','').ToLower(); $notes = Get-Content '%RELEASE_NOTES%' -Raw; $manifest = @{ version='%NEXT_VERSION%'; asset_filename='%ZIP_NAME%'; download_url='%DOWNLOAD_URL%'; sha256=$sha; published_at=(Get-Date).ToUniversalTime().ToString('o'); notes_summary=$notes }; $thumb = '%SIGNING_THUMBPRINT%'; if ($thumb) { $manifest.signing_thumbprint = $thumb }; $manifest | ConvertTo-Json -Depth 4 | Set-Content '%MANIFEST_PATH%' -Encoding UTF8"
+python -c "import datetime, hashlib, json, pathlib; zip_path=r'%ZIP_PATH%'; h=hashlib.sha256(); f=open(zip_path,'rb'); [h.update(chunk) for chunk in iter(lambda: f.read(1024*1024), b'')]; f.close(); notes=pathlib.Path(r'%RELEASE_NOTES%').read_text(encoding='utf-8', errors='ignore'); manifest={'version':'%NEXT_VERSION%','asset_filename':'%ZIP_NAME%','download_url':'%DOWNLOAD_URL%','sha256':h.hexdigest(),'published_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'notes_summary':notes}; thumb=r'%SIGNING_THUMBPRINT%'; if thumb: manifest['signing_thumbprint']=thumb; pathlib.Path(r'%MANIFEST_PATH%').write_text(json.dumps(manifest, indent=2), encoding='utf-8')"
 if errorlevel 1 (
     echo Failed to create update manifest.
     exit /b 1
