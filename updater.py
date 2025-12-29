@@ -248,7 +248,7 @@ def verify_authenticode(exe_path: str, allowed_thumbprints: Iterable[str]) -> No
         (
             f"$env:PSModulePath='{module_path}'; "
             "Get-AuthenticodeSignature -FilePath "
-            f"'{exe_path}' | Select-Object -Property Status,StatusMessage,@{n='Thumbprint';e={$_.SignerCertificate.Thumbprint}} | ConvertTo-Json"
+            f"'{exe_path}' | Select-Object -Property Status,StatusMessage,@{{n='Thumbprint';e={{$_.SignerCertificate.Thumbprint}}}} | ConvertTo-Json"
         ),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
