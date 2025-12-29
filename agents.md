@@ -46,6 +46,6 @@
 ## Update notes
 - The updater accepts a `signing_thumbprint` value in the release manifest so self-signed Authenticode signatures can be trusted when Windows reports UnknownError.
 - Release manifests are generated via `tools/release_manifest.py`, which parses `signtool verify` output to capture the signing thumbprint (override with `SIGN_CERT_THUMBPRINT`).
-- The version bump in `build_exe.bat` relies on PowerShell `-replace` with `^APP_VERSION\s*=` and `""`-escaped quotes; avoid `\"` or doubled backslashes or the update will not apply.
+- Version bumps in `build_exe.bat` now call `tools/update_version.py` to update `app_version.py` safely (avoids PowerShell quoting pitfalls).
 
 Keep edits lean, comment only when code is not self-explanatory, and leave user-facing docs in README.md. Everything technical goes here.

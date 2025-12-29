@@ -137,7 +137,7 @@ if "%CURRENT_VERSION%"=="" (
 exit /b 0
 
 :update_version_file
-powershell -NoProfile -Command "(Get-Content '%VERSION_FILE%') -replace '^APP_VERSION\s*=.*','APP_VERSION = ""%NEXT_VERSION%""' | Set-Content '%VERSION_FILE%' -Encoding ASCII"
+python tools\update_version.py --path "%VERSION_FILE%" --version "%NEXT_VERSION%"
 if errorlevel 1 (
     echo Failed to update %VERSION_FILE%.
     exit /b 1
