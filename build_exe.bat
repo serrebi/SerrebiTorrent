@@ -100,16 +100,9 @@ echo Signing %EXE_NAME%...
 "%SIGNTOOL_PATH%" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a ".\%EXE_NAME%"
 if errorlevel 1 (popd & goto :error)
 popd
-set "SIGNING_THUMBPRINT="
 if defined SIGN_CERT_THUMBPRINT (
-    set "SIGNING_THUMBPRINT=%SIGN_CERT_THUMBPRINT%"
-) else (
-    set "SIGNING_THUMBPRINT_FILE=%TEMP%\\SerrebiTorrent_thumbprint.txt"
-    python -c "import re, subprocess, pathlib; exe=r'%CD%\\dist\\%APP_NAME%\\%EXE_NAME%'; tool=r'%SIGNTOOL_PATH%'; result=subprocess.run([tool,'verify','/pa','/v',exe], capture_output=True, text=True); data=(result.stdout or '') + (result.stderr or ''); m=re.search(r'SHA1 hash:\s*([0-9A-Fa-f]{40})', data); pathlib.Path(r'!SIGNING_THUMBPRINT_FILE!').write_text(m.group(1) if m else '')"
-    if exist "!SIGNING_THUMBPRINT_FILE!" set /p SIGNING_THUMBPRINT=<"!SIGNING_THUMBPRINT_FILE!"
-    if exist "!SIGNING_THUMBPRINT_FILE!" del /f /q "!SIGNING_THUMBPRINT_FILE!" >nul 2>&1
+    set "SIGN_CERT_THUMBPRINT=%SIGN_CERT_THUMBPRINT: =%"
 )
-if defined SIGNING_THUMBPRINT set "SIGNING_THUMBPRINT=!SIGNING_THUMBPRINT: =!"
 
 set "ZIP_NAME=%APP_NAME%-v%NEXT_VERSION%.zip"
 set "ZIP_PATH=%CD%\dist\%ZIP_NAME%"
@@ -163,7 +156,12 @@ exit /b 0
 :create_manifest
 set "MANIFEST_PATH=%CD%\dist\%MANIFEST_NAME%"
 set "DOWNLOAD_URL=https://github.com/%GITHUB_OWNER%/%GITHUB_REPO%/releases/download/v%NEXT_VERSION%/%ZIP_NAME%"
-python -c "import datetime, hashlib, json, pathlib; zip_path=r'%ZIP_PATH%'; h=hashlib.sha256(); f=open(zip_path,'rb'); [h.update(chunk) for chunk in iter(lambda: f.read(1024*1024), b'')]; f.close(); notes=pathlib.Path(r'%RELEASE_NOTES%').read_text(encoding='utf-8', errors='ignore'); manifest={'version':'%NEXT_VERSION%','asset_filename':'%ZIP_NAME%','download_url':'%DOWNLOAD_URL%','sha256':h.hexdigest(),'published_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'notes_summary':notes}; thumb=r'%SIGNING_THUMBPRINT%'; if thumb: manifest['signing_thumbprint']=thumb; pathlib.Path(r'%MANIFEST_PATH%').write_text(json.dumps(manifest, indent=2), encoding='utf-8')"
+set "EXE_PATH=%CD%\dist\%APP_NAME%\%EXE_NAME%"
+set "SIGNING_THUMBPRINT_ARG="
+if defined SIGN_CERT_THUMBPRINT (
+    set "SIGNING_THUMBPRINT_ARG=--signing-thumbprint \"%SIGN_CERT_THUMBPRINT%\""
+)
+python tools\release_manifest.py --version "%NEXT_VERSION%" --asset-name "%ZIP_NAME%" --download-url "%DOWNLOAD_URL%" --zip-path "%ZIP_PATH%" --notes-path "%RELEASE_NOTES%" --signtool-path "%SIGNTOOL_PATH%" --exe-path "%EXE_PATH%" %SIGNING_THUMBPRINT_ARG% --output "%MANIFEST_PATH%"
 if errorlevel 1 (
     echo Failed to create update manifest.
     exit /b 1
