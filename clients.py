@@ -378,6 +378,10 @@ class QBittorrentClient(BaseClient):
     def stop_torrent(self, h): self.c.torrents_pause(torrent_hashes=h)
     def remove_torrent(self, h): self.c.torrents_delete(torrent_hashes=h, delete_files=False)
     def remove_torrent_with_data(self, h): self.c.torrents_delete(torrent_hashes=h, delete_files=True)
+    def remove_torrents(self, hs, df=False):
+        hashes = self._normalize_hashes(hs)
+        if not hashes: return
+        self.c.torrents_delete(torrent_hashes=hashes, delete_files=self._normalize_delete_files(df))
     def add_torrent_url(self, u, sp=None): self.c.torrents_add(urls=u, save_path=sp)
     def add_torrent_file(self, c, sp=None, p=None): self.c.torrents_add(torrent_files=c, save_path=sp)
     def recheck_torrent(self, h): self.c.torrents_recheck(torrent_hashes=h)

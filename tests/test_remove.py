@@ -41,9 +41,22 @@ class RemoveTorrentsTests(unittest.TestCase):
             client.remove_torrents([hash_bytes], df="false")
 
             self.assertEqual(len(client.c.calls), 1)
-            torrent_hash, delete_files = client.c.calls[0]
-            self.assertEqual(torrent_hash, hash_bytes.decode("ascii"))
+            torrent_hashes, delete_files = client.c.calls[0]
+            self.assertEqual(torrent_hashes, [hash_bytes.decode("ascii")])
             self.assertFalse(delete_files)
+
+    def test_qbittorrent_remove_multiple_torrents_efficiently(self):
+        h1 = "0000000000000000000000000000000000000001"
+        h2 = "0000000000000000000000000000000000000002"
+        with mock.patch.object(clients.qbittorrentapi, "Client", FakeQbittorrentApiClient):
+            client = clients.QBittorrentClient("localhost", "user", "pass")
+            client.remove_torrents([h1, h2], df=True)
+
+            # Should be a single call with a list of hashes
+            self.assertEqual(len(client.c.calls), 1)
+            hashes, delete_files = client.c.calls[0]
+            self.assertEqual(hashes, [h1, h2])
+            self.assertTrue(delete_files)
 
     def test_transmission_remove_torrents_parses_delete_flag(self):
         with mock.patch.object(clients, "TransClient", FakeTransmissionApiClient):
