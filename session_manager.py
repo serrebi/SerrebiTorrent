@@ -221,8 +221,21 @@ class SessionManager:
         self.ses.add_torrent(params)
         
         if ih:
-            self.torrents_db[ih] = {'save_path': save_path, 'added': time.time()}
+            entry = {'save_path': save_path, 'added': time.time()}
+            if file_priorities:
+                entry['priorities'] = list(file_priorities)
+            self.torrents_db[ih] = entry
             self._save_torrents_db()
+
+    def update_priorities(self, info_hash, priorities):
+        if info_hash in self.torrents_db:
+            try:
+                # Convert vector to list if needed
+                p_list = list(priorities)
+                self.torrents_db[info_hash]['priorities'] = p_list
+                self._save_torrents_db()
+            except Exception as e:
+                print(f"Error updating priorities for {info_hash}: {e}")
 
     def add_magnet(self, url, save_path):
         params = lt.parse_magnet_uri(url)
@@ -282,11 +295,16 @@ class SessionManager:
                                     
                                     # Fallback to .torrent
                                     save_path = default_save_path
+                                    priorities = None
                                     if ih_from_resume in self.torrents_db:
-                                         sp = self.torrents_db[ih_from_resume].get('save_path')
-                                         if sp: save_path = sp
+                                         entry = self.torrents_db[ih_from_resume]
+                                         if entry.get('save_path'): save_path = entry.get('save_path')
+                                         if entry.get('priorities'): priorities = entry.get('priorities')
                                     
-                                    params = {'ti': info, 'save_path': save_path} 
+                                    params = {'ti': info, 'save_path': save_path}
+                                    if priorities:
+                                        params['file_priorities'] = priorities
+                                    
                                     self.ses.add_torrent(params)
                                     ih = ""
                                     try:
@@ -314,11 +332,16 @@ class SessionManager:
                                 info = lt.torrent_info(torrent_content)
                                 
                                 save_path = default_save_path
+                                priorities = None
                                 if ih in self.torrents_db:
-                                     sp = self.torrents_db[ih].get('save_path')
-                                     if sp: save_path = sp
+                                     entry = self.torrents_db[ih]
+                                     if entry.get('save_path'): save_path = entry.get('save_path')
+                                     if entry.get('priorities'): priorities = entry.get('priorities')
 
                                 params = {'ti': info, 'save_path': save_path}
+                                if priorities:
+                                    params['file_priorities'] = priorities
+                                
                                 self.ses.add_torrent(params)
                                 loaded_hashes.add(ih)
                                 print(f"Loaded {ih}.torrent from file (no resume data) using tracked path.")
