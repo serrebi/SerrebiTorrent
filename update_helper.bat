@@ -1,6 +1,8 @@
 @echo off
 setlocal enableextensions enabledelayedexpansion
 
+cd /d "%~dp0"
+
 if "%~4"=="" (
     echo Usage: update_helper.bat ^<install_dir^> ^<new_dir^> ^<backup_dir^> ^<exe_name^>
     exit /b 2
