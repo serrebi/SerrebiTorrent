@@ -90,6 +90,14 @@ echo Running PyInstaller...
 pyinstaller SerrebiTorrent.spec --noconfirm
 if errorlevel 1 goto :error
 
+echo Copying additional files...
+copy /Y "update_helper.bat" "dist\%APP_NAME%\"
+if errorlevel 1 goto :error
+if exist "web_static" (
+    xcopy /E /I /Y "web_static" "dist\%APP_NAME%\web_static"
+    if errorlevel 1 goto :error
+)
+
 if not exist "%SIGNTOOL_PATH%" (
     echo SignTool not found: "%SIGNTOOL_PATH%"
     goto :error
