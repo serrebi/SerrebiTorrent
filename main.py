@@ -183,6 +183,8 @@ def clean_status_message(msg):
         remainder = low.replace(phrase, "").strip(" -;:().[]{}\t\r\n")
         if not remainder:
             return ""
+    if "the handle is invalid" in low:
+        return ""
     if low in ("success", "ok", "no error", "none"):
         return ""
     return m
