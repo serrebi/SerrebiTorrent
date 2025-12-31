@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import json
 
 from libtorrent_env import prepare_libtorrent_dlls
 
@@ -28,6 +29,8 @@ class SessionManager:
             raise RuntimeError("libtorrent not available")
             
         self.state_dir = get_state_dir()
+        self.torrents_db_path = os.path.join(self.state_dir, 'torrents.json')
+        self.torrents_db = self._load_torrents_db()
 
         # Create Session
         self.ses = lt.session()
@@ -44,6 +47,22 @@ class SessionManager:
         self.alert_thread.start()
         
         self.load_state()
+
+    def _load_torrents_db(self):
+        if os.path.exists(self.torrents_db_path):
+            try:
+                with open(self.torrents_db_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Error loading torrents.json: {e}")
+        return {}
+
+    def _save_torrents_db(self):
+        try:
+            with open(self.torrents_db_path, 'w', encoding='utf-8') as f:
+                json.dump(self.torrents_db, f, indent=2)
+        except Exception as e:
+            print(f"Error saving torrents.json: {e}")
 
     def _info_hash_key(self, info_hashes):
         if info_hashes is None:
@@ -164,6 +183,14 @@ class SessionManager:
             data = lt.write_resume_data(alert.params)
             with open(path, 'wb') as f:
                 f.write(data)
+                
+            # Update DB with current save path from params if available
+            # This ensures we have the latest path even if user moved it (though move is not fully implemented yet)
+            if alert.params.save_path:
+                 if ih not in self.torrents_db or self.torrents_db[ih].get('save_path') != alert.params.save_path:
+                      self.torrents_db[ih] = {'save_path': alert.params.save_path, 'added': time.time()}
+                      self._save_torrents_db()
+
         except Exception as e:
             print(f"Error writing resume data: {e}")
 
@@ -192,6 +219,10 @@ class SessionManager:
             params['file_priorities'] = file_priorities
             
         self.ses.add_torrent(params)
+        
+        if ih:
+            self.torrents_db[ih] = {'save_path': save_path, 'added': time.time()}
+            self._save_torrents_db()
 
     def add_magnet(self, url, save_path):
         params = lt.parse_magnet_uri(url)
@@ -207,6 +238,10 @@ class SessionManager:
         # For now, just adding it directly to session.
         self.ses.add_torrent(params)
 
+        if ih:
+             self.torrents_db[ih] = {'save_path': save_path, 'added': time.time()}
+             self._save_torrents_db()
+
     def load_state(self):
         print("Loading session state...")
         loaded_hashes = set()
@@ -221,15 +256,17 @@ class SessionManager:
                             data = fp.read()
                         params = lt.read_resume_data(data)
                         
-                        # Add torrent params might not have save_path if it's a magnet with no metadata yet.
-                        # For robustness, ensure save_path is set from profile or some default.
-                        # If a profile existed and specified save_path for local, it would be in params.
-                        # For now, default if not present.
-                        if not params.save_path:
+                        ih = self._info_hash_key(params.info_hashes)
+                        
+                        # Use stored save_path if available to fix corrupted/missing resume path
+                        if ih in self.torrents_db:
+                            stored_path = self.torrents_db[ih].get('save_path')
+                            if stored_path: # and os.path.isdir(stored_path):
+                                params.save_path = stored_path
+                        elif not params.save_path:
                              params.save_path = default_save_path
 
                         self.ses.add_torrent(params)
-                        ih = self._info_hash_key(params.info_hashes)
                         if ih:
                             loaded_hashes.add(ih)
                     except Exception as e:
@@ -242,9 +279,14 @@ class SessionManager:
                                 with open(torrent_file_path, 'rb') as tfp:
                                     torrent_content = tfp.read()
                                     info = lt.torrent_info(torrent_content)
-                                    # Need original save_path here. If not in resume, fallback.
-                                    # For simplicity, if resume data failed, we re-add as new, so save_path from profile.
-                                    params = {'ti': info, 'save_path': default_save_path} 
+                                    
+                                    # Fallback to .torrent
+                                    save_path = default_save_path
+                                    if ih_from_resume in self.torrents_db:
+                                         sp = self.torrents_db[ih_from_resume].get('save_path')
+                                         if sp: save_path = sp
+                                    
+                                    params = {'ti': info, 'save_path': save_path} 
                                     self.ses.add_torrent(params)
                                     ih = ""
                                     try:
@@ -256,7 +298,7 @@ class SessionManager:
                                         ih = self._info_hash_key(info.info_hash())
                                     if ih:
                                         loaded_hashes.add(ih)
-                                    print(f"Successfully loaded {ih_from_resume}.torrent after resume data failure using default path.")
+                                    print(f"Successfully loaded {ih_from_resume}.torrent after resume data failure using tracked path.")
                             except Exception as tf_e:
                                 print(f"Failed to load .torrent file {torrent_file_path} as fallback: {tf_e}")
 
@@ -270,10 +312,16 @@ class SessionManager:
                             with open(os.path.join(self.state_dir, f), 'rb') as tfp:
                                 torrent_content = tfp.read()
                                 info = lt.torrent_info(torrent_content)
-                                params = {'ti': info, 'save_path': default_save_path}
+                                
+                                save_path = default_save_path
+                                if ih in self.torrents_db:
+                                     sp = self.torrents_db[ih].get('save_path')
+                                     if sp: save_path = sp
+
+                                params = {'ti': info, 'save_path': save_path}
                                 self.ses.add_torrent(params)
                                 loaded_hashes.add(ih)
-                                print(f"Loaded {ih}.torrent from file (no resume data).")
+                                print(f"Loaded {ih}.torrent from file (no resume data) using tracked path.")
                         except Exception as e:
                             print(f"Error loading torrent file {f}: {e}")
 
@@ -304,6 +352,8 @@ class SessionManager:
             print(f"Timed out waiting for {len(self.pending_saves)} resume data saves.")
         else:
             print("All resume data saved successfully.")
+        
+        self._save_torrents_db()
 
     def _find_handle(self, info_hash_str):
         for h in self.ses.get_torrents():
@@ -337,6 +387,12 @@ class SessionManager:
                 r_path = os.path.join(self.state_dir, info_hash + '.resume')
                 if os.path.exists(r_path):
                     os.remove(r_path)
+                
+                # Remove from DB
+                if info_hash in self.torrents_db:
+                    del self.torrents_db[info_hash]
+                    self._save_torrents_db()
+                    
             except Exception as e:
                 print(f"Error cleaning up state files for {info_hash}: {e}")
 
