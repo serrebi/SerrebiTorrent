@@ -1831,9 +1831,9 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
 
         menu.AppendSeparator()
         try:
-            settings_item = menu.Append(wx.ID_PREFERENCES, "Settings")
+            settings_item = menu.Append(wx.ID_PREFERENCES, "Application Settings...")
         except Exception:
-            settings_item = menu.Append(wx.ID_ANY, "Settings")
+            settings_item = menu.Append(wx.ID_ANY, "Application Settings...")
         self.Bind(wx.EVT_MENU, self.on_settings, settings_item)
 
         open_item = menu.Append(wx.ID_ANY, f"Open {APP_NAME}")
@@ -2419,15 +2419,15 @@ class MainFrame(wx.Frame):
 
         # ----- Tools menu -----
         tools_menu = wx.Menu()
-        prefs_item = tools_menu.Append(wx.ID_PREFERENCES, "&Preferences...\tCtrl+,", "Configure application settings")
+        settings_item = tools_menu.Append(wx.ID_PREFERENCES, "Application &Settings...\tCtrl+,", "Configure application settings")
         assoc_item = tools_menu.Append(wx.ID_ANY, "Register &Associations", "Associate .torrent and magnet links with this app")
         update_item = tools_menu.Append(wx.ID_ANY, "Check for &Updates...\tF5", "Check for updates")
         tools_menu.AppendSeparator()
         
-        self.qbit_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&qBittorrent Remote Preferences", "Edit connected qBittorrent settings")
-        self.trans_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&Transmission Remote Preferences", "Edit connected Transmission settings")
-        self.rtorrent_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&rTorrent Remote Preferences", "Edit connected rTorrent settings")
-        self.local_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "&Local Session Preferences", "Edit local session settings in a structured view")
+        self.qbit_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "qBittorrent Remote &Settings...", "Edit connected qBittorrent settings")
+        self.trans_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "Transmission Remote &Settings...", "Edit connected Transmission settings")
+        self.rtorrent_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "rTorrent Remote &Settings...", "Edit connected rTorrent settings")
+        self.local_remote_prefs_item = tools_menu.Append(wx.ID_ANY, "Local Session &Settings...", "Edit local session settings in a structured view")
         
         self.qbit_remote_prefs_item.Enable(False)
         self.trans_remote_prefs_item.Enable(False)
@@ -2442,7 +2442,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_add_file, add_file_item)
         self.Bind(wx.EVT_MENU, self.on_add_url, add_url_item)
         self.Bind(wx.EVT_MENU, self.on_create_torrent, create_torrent_item)
-        self.Bind(wx.EVT_MENU, self.on_prefs, prefs_item)
+        self.Bind(wx.EVT_MENU, self.on_prefs, settings_item)
         self.Bind(wx.EVT_MENU, lambda e: self.Close(force=True), exit_item)
 
         # Bind actions menu.
@@ -2481,7 +2481,7 @@ class MainFrame(wx.Frame):
             (wx.ACCEL_CTRL, ord('N'), create_torrent_item.GetId()),
             (wx.ACCEL_CTRL, ord('I'), copy_hash_item.GetId()),
             (wx.ACCEL_CTRL, ord('M'), copy_magnet_item.GetId()),
-            (wx.ACCEL_CTRL, ord(','), prefs_item.GetId()),
+            (wx.ACCEL_CTRL, ord(','), settings_item.GetId()),
         ]
         self.SetAcceleratorTable(wx.AcceleratorTable(accel_entries))
 
