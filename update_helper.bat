@@ -30,8 +30,10 @@ set "STAGING_DIR="
 set "BACKUP_DIR="
 set "EXE_NAME="
 
-echo %ARG1% | findstr /r "^[0-9][0-9]*$" >nul
-if not errorlevel 1 (
+rem findstr doesn't support "$" end-of-line anchor reliably; use a delimiter test instead.
+set "NONNUM="
+for /f "delims=0123456789" %%A in ("%ARG1%") do set "NONNUM=%%A"
+if not defined NONNUM (
     set "PID=%ARG1%"
     set "INSTALL_DIR=%ARG2%"
     set "STAGING_DIR=%ARG3%"
@@ -102,7 +104,7 @@ rem Keep user data in place (portable mode): SerrebiTorrent_Data and any legacy 
 
 if not defined BACKUP_DIR (
     for /f %%T in ('powershell -NoProfile -InputFormat None -Command "(Get-Date).ToString(\"yyyyMMddHHmmss\")"') do set STAMP=%%T
-    set "BACKUP_DIR=%INSTALL_DIR%_backup_%STAMP%"
+    set "BACKUP_DIR=%INSTALL_DIR%_backup_!STAMP!"
 )
 
 echo [SerrebiTorrent Update] Backing up current install to "%BACKUP_DIR%"...
