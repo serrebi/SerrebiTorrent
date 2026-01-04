@@ -2644,17 +2644,13 @@ class MainFrame(wx.Frame):
             helper_copy = os.path.join(staging_root, "update_helper.bat")
             shutil.copy2(helper_src, helper_copy)
 
-            cmd = [
-                "cmd.exe",
-                "/C",
-                helper_copy,
-                str(os.getpid()),
-                install_dir,
-                new_dir,
-                updater.APP_EXE_NAME,
-            ]
-            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            subprocess.Popen(cmd, creationflags=flags, cwd=parent_dir)
+            helper_cmd = (
+                f"\"{helper_copy}\" {os.getpid()} \"{install_dir}\" \"{new_dir}\" \"{updater.APP_EXE_NAME}\""
+            )
+            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+                subprocess, "CREATE_NO_WINDOW", 0
+            )
+            subprocess.Popen(helper_cmd, creationflags=flags, cwd=parent_dir, shell=True)
             wx.CallAfter(self._on_update_started)
         except Exception as e:
             wx.CallAfter(self._on_update_failed, str(e))

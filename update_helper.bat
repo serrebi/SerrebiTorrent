@@ -52,7 +52,7 @@ if "%EXE_NAME%"=="" goto :usage
 rem Ensure we are not running from within the install directory
 if not defined SERREBITORRENT_UPDATE_HELPER_RELOCATED (
     set "SCRIPT_PATH=%~f0"
-    powershell -NoProfile -InputFormat None -Command "$sp=[string]$env:SCRIPT_PATH; $inst=[string]$env:INSTALL_DIR; if ($sp -and $inst -and $sp.ToLower().StartsWith($inst.ToLower())) { exit 0 } else { exit 1 }" >nul 2>nul
+    powershell -NoProfile -InputFormat None -Command "$sp=[string]$env:SCRIPT_PATH; $inst=[string]$env:INSTALL_DIR; if (-not $sp -or -not $inst) { exit 1 }; $inst=$inst.TrimEnd('\'); if ($sp.ToLower().StartsWith(($inst + '\').ToLower())) { exit 0 } else { exit 1 }" >nul 2>nul
     if not errorlevel 1 (
         set "SERREBITORRENT_UPDATE_HELPER_RELOCATED=1"
         for /f %%T in ('powershell -NoProfile -InputFormat None -Command "(Get-Date).ToString(\"yyyyMMddHHmmss\")"') do set "HSTAMP=%%T"
