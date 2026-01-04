@@ -1,35 +1,29 @@
+from __future__ import annotations
+
 from config_manager import ConfigManager
-import os
-import json
+import config_manager
 
-def test_profiles():
-    print("Testing ConfigManager profiles...")
+
+def _configure_paths(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    legacy_path = tmp_path / "legacy_config.json"
+    monkeypatch.setattr(config_manager, "CONFIG_FILE", str(config_path))
+    monkeypatch.setattr(config_manager, "LEGACY_CONFIG_FILE", str(legacy_path))
+    return config_path, legacy_path
+
+
+def test_profiles_creates_default_profile(tmp_path, monkeypatch):
+    _configure_paths(tmp_path, monkeypatch)
+
     cm = ConfigManager()
-    
-    # 1. Check if default profile exists
     profiles = cm.get_profiles()
-    print(f"Profiles count: {len(profiles)}")
-    
-    if not profiles:
-        print("ERROR: No profiles found. Default profile should be created automatically.")
-        return
+    assert isinstance(profiles, dict)
+    assert profiles, "Default profile should be created automatically"
 
-    # 2. Check structure
-    for pid, p in profiles.items():
-        print(f"Checking profile {pid}: {p['name']} ({p['type']})")
-        if 'name' not in p or 'type' not in p or 'url' not in p:
-            print(f"ERROR: Invalid profile structure for {pid}")
-            return
+    default_id = cm.get_default_profile_id()
+    assert default_id in profiles
 
-    # 3. Check default ID
-    def_id = cm.get_default_profile_id()
-    print(f"Default Profile ID: {def_id}")
-    
-    if def_id and def_id not in profiles:
-        print(f"ERROR: Default profile ID {def_id} not in profiles list!")
-        return
-
-    print("Profile tests passed.")
-
-if __name__ == "__main__":
-    test_profiles()
+    profile = profiles[default_id]
+    assert profile.get("name") == "Local"
+    assert profile.get("type") == "local"
+    assert "url" in profile

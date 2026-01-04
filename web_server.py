@@ -18,6 +18,7 @@ WEB_CONFIG = {
     'client': None,
     'username': 'admin',
     'password': 'password',
+    'host': '127.0.0.1',
     'port': 8080,
     'enabled': False
 }
@@ -63,7 +64,8 @@ def api_logout():
 @login_required
 def get_profiles():
     app_ref = WEB_CONFIG['app']
-    if not app_ref: return jsonify({'profiles': {}, 'current_id': None})
+    if not app_ref:
+        return jsonify({'profiles': {}, 'current_id': None})
     profiles = app_ref.config_manager.get_profiles()
     current_id = app_ref.current_profile_id
     return jsonify({
@@ -86,7 +88,8 @@ def switch_profile():
 @login_required
 def add_profile():
     app_ref = WEB_CONFIG['app']
-    if not app_ref: return "Error", 500
+    if not app_ref:
+        return "Error", 500
     
     name = request.form.get('name')
     type = request.form.get('type')
@@ -125,11 +128,16 @@ def torrents_info():
         is_error = bool(msg and "success" not in msg.lower() and "ok" not in msg.lower())
         
         stats["All"] += 1
-        if state == 1 and pct < 100: stats["Downloading"] += 1
-        if pct >= 100: stats["Finished"] += 1
-        if is_seeding: stats["Seeding"] += 1
-        if is_stopped: stats["Stopped"] += 1
-        if is_error: stats["Failed"] += 1
+        if state == 1 and pct < 100:
+            stats["Downloading"] += 1
+        if pct >= 100:
+            stats["Finished"] += 1
+        if is_seeding:
+            stats["Seeding"] += 1
+        if is_stopped:
+            stats["Stopped"] += 1
+        if is_error:
+            stats["Failed"] += 1
         
         tracker_counts[tracker_domain] = tracker_counts.get(tracker_domain, 0) + 1
 
@@ -188,7 +196,8 @@ def torrents_recheck():
         for h in hashes.split('|'):
             try:
                 client.recheck_torrent(h)
-            except: pass
+            except Exception:
+                continue
     return "Ok."
 
 @app.route('/api/v2/torrents/reannounce', methods=['POST'])
@@ -200,7 +209,8 @@ def torrents_reannounce():
         for h in hashes.split('|'):
             try:
                 client.reannounce_torrent(h)
-            except: pass
+            except Exception:
+                continue
     return "Ok."
 
 @app.route('/api/v2/torrents/openfolder', methods=['POST'])
@@ -216,7 +226,8 @@ def torrents_openfolder():
             if path and app_ref:
                 import wx
                 wx.CallAfter(app_ref._open_path, path)
-        except: pass
+        except Exception:
+            pass
     return "Ok."
 
 @app.route('/api/v2/torrents/delete', methods=['POST'])
@@ -237,7 +248,8 @@ def torrents_delete():
 @login_required
 def torrents_add():
     client = WEB_CONFIG['client']
-    if not client: return "No client", 500
+    if not client:
+        return "No client", 500
     
     urls = request.form.get('urls')
     save_path = request.form.get('savepath')
@@ -275,7 +287,8 @@ def torrents_add():
 @login_required
 def rss_feeds():
     app_ref = WEB_CONFIG['app']
-    if not app_ref or not hasattr(app_ref, 'rss_panel'): return jsonify({})
+    if not app_ref or not hasattr(app_ref, 'rss_panel'):
+        return jsonify({})
     return jsonify(app_ref.rss_panel.manager.feeds)
 
 @app.route('/api/v2/rss/add_feed', methods=['POST'])
@@ -305,7 +318,8 @@ def rss_remove_feed():
 @login_required
 def rss_rules():
     app_ref = WEB_CONFIG['app']
-    if not app_ref or not hasattr(app_ref, 'rss_panel'): return jsonify([])
+    if not app_ref or not hasattr(app_ref, 'rss_panel'):
+        return jsonify([])
     return jsonify(app_ref.rss_panel.manager.rules)
 
 @app.route('/api/v2/rss/set_rule', methods=['POST'])
@@ -344,8 +358,10 @@ def rss_remove_rule():
 @login_required
 def rss_import_flexget():
     app_ref = WEB_CONFIG['app']
-    if not app_ref: return "Error", 500
-    if 'config' not in request.files: return "No file", 400
+    if not app_ref:
+        return "Error", 500
+    if 'config' not in request.files:
+        return "No file", 400
     
     f = request.files['config']
     # Save to temp and import
@@ -360,7 +376,8 @@ def rss_import_flexget():
         except Exception as e:
             print(f"Import error: {e}")
         finally:
-            if os.path.exists(temp_path): os.remove(temp_path)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     wx.CallAfter(do_import)
     return jsonify({'status': 'Import started in background'})
@@ -369,14 +386,16 @@ def rss_import_flexget():
 @login_required
 def get_app_prefs():
     app_ref = WEB_CONFIG['app']
-    if not app_ref: return jsonify({})
+    if not app_ref:
+        return jsonify({})
     return jsonify(app_ref.config_manager.get_preferences())
 
 @app.route('/api/v2/app/prefs', methods=['POST'])
 @login_required
 def set_app_prefs():
     app_ref = WEB_CONFIG['app']
-    if not app_ref: return "Error", 500
+    if not app_ref:
+        return "Error", 500
     new_prefs = request.json
     if new_prefs:
         import wx
@@ -392,13 +411,17 @@ def set_app_prefs():
 @login_required
 def get_remote_prefs():
     client = WEB_CONFIG['client']
-    if not client: return jsonify({})
+    if not client:
+        return jsonify({})
     # We also return the client name to determine schema on frontend
     name = "Other"
     from clients import QBittorrentClient, RTorrentClient, TransmissionClient
-    if isinstance(client, QBittorrentClient): name = "qbittorrent"
-    elif isinstance(client, RTorrentClient): name = "rtorrent"
-    elif isinstance(client, TransmissionClient): name = "transmission"
+    if isinstance(client, QBittorrentClient):
+        name = "qbittorrent"
+    elif isinstance(client, RTorrentClient):
+        name = "rtorrent"
+    elif isinstance(client, TransmissionClient):
+        name = "transmission"
     
     return jsonify({
         'name': name,
@@ -409,7 +432,8 @@ def get_remote_prefs():
 @login_required
 def set_remote_prefs():
     client = WEB_CONFIG['client']
-    if not client: return "No client", 500
+    if not client:
+        return "No client", 500
     new_prefs = request.json
     if new_prefs:
         try:
@@ -438,7 +462,8 @@ def sync_maindata():
 server_thread = None
 
 def run_server():
-    app.run(host='0.0.0.0', port=WEB_CONFIG['port'], threaded=True)
+    host = WEB_CONFIG.get('host') or '127.0.0.1'
+    app.run(host=host, port=WEB_CONFIG['port'], threaded=True)
 
 def start_web_ui():
     global server_thread

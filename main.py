@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import wx
 import sys
 import os
@@ -292,7 +294,8 @@ class AddTorrentDialog(wx.Dialog):
 
     def update_item_label(self, item, checked):
         data = self.item_map.get(item)
-        if not data: return
+        if not data:
+            return
         
         prefix = "[x]" if checked else "[ ]"
         size_str = f" ({fmt_size(data['size'])})" if data['size'] > 0 else ""
@@ -326,7 +329,8 @@ class AddTorrentDialog(wx.Dialog):
         if not item.IsOk():
             item = self.tree.GetSelection()
         
-        if not item.IsOk(): return
+        if not item.IsOk():
+            return
 
         menu = wx.Menu()
         check_item = menu.Append(wx.ID_ANY, "Check")
@@ -389,7 +393,8 @@ class AddTorrentDialog(wx.Dialog):
         priorities = [0] * len(self.file_list)
         
         def traverse(item):
-            if not item.IsOk(): return
+            if not item.IsOk():
+                return
             
             data = self.item_map.get(item)
             if data and data['idx'] is not None:
@@ -579,13 +584,12 @@ class TorrentListCtrl(wx.ListCtrl):
             pass
 
     def get_selected_hashes(self):
-        count = self.GetSelectedItemCount()
         selection = []
         item = self.GetFirstSelected()
         while item != -1:
             try:
                 selection.append(self.data[item]['hash'])
-            except:
+            except Exception:
                 pass
             item = self.GetNextSelected(item)
         return selection
@@ -799,7 +803,8 @@ class ConnectDialog(wx.Dialog):
 
     def on_edit(self, event):
         pid = self.get_selected_id()
-        if not pid: return
+        if not pid:
+            return
         
         p = self.cm.get_profile(pid)
         dlg = ProfileDialog(self, p)
@@ -969,7 +974,11 @@ class PreferencesDialog(wx.Dialog):
         self.web_enabled_chk.SetValue(self.prefs.get('web_ui_enabled', False))
         web_sizer.Add(self.web_enabled_chk, 0, wx.ALL, 10)
         
-        grid = wx.FlexGridSizer(3, 2, 10, 10)
+        grid = wx.FlexGridSizer(4, 2, 10, 10)
+        grid.Add(wx.StaticText(web_panel, label="Bind Host:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.web_host = wx.TextCtrl(web_panel, value=self.prefs.get('web_ui_host', '127.0.0.1'))
+        grid.Add(self.web_host, 0, wx.EXPAND)
+
         grid.Add(wx.StaticText(web_panel, label="Port:"), 0, wx.ALIGN_CENTER_VERTICAL)
         self.web_port = wx.SpinCtrl(web_panel, min=1, max=65535, initial=self.prefs.get('web_ui_port', 8080))
         grid.Add(self.web_port, 0, wx.EXPAND)
@@ -1078,6 +1087,7 @@ class PreferencesDialog(wx.Dialog):
             "tracker_url": self.track_url_input.GetValue(),
             "rss_update_interval": self.rss_interval.GetValue(),
             "web_ui_enabled": self.web_enabled_chk.GetValue(),
+            "web_ui_host": self.web_host.GetValue(),
             "web_ui_port": self.web_port.GetValue(),
             "web_ui_user": self.web_user.GetValue(),
             "web_ui_pass": self.web_pass.GetValue(),
@@ -1546,22 +1556,28 @@ class FilesListCtrl(wx.ListCtrl):
         self.Refresh()
 
     def OnGetItemText(self, item, col):
-        if item >= len(self.data): return ""
+        if item >= len(self.data):
+            return ""
         row = self.data[item]
         if col == 0:
             return os.path.basename(row['name'])
         if col == 1:
             size = row['size']
             for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-                if size < 1024: return f"{size:.1f} {unit}"
+                if size < 1024:
+                    return f"{size:.1f} {unit}"
                 size /= 1024
             return f"{size:.1f} PB"
-        if col == 2: return f"{row['progress']*100:.1f}%"
+        if col == 2:
+            return f"{row['progress']*100:.1f}%"
         if col == 3:
             p = row['priority']
-            if p == 0: return "Skip"
-            if p == 1: return "Normal"
-            if p == 2: return "High"
+            if p == 0:
+                return "Skip"
+            if p == 1:
+                return "Normal"
+            if p == 2:
+                return "High"
             return str(p)
         return ""
 
@@ -1581,19 +1597,27 @@ class PeersListCtrl(wx.ListCtrl):
         self.Refresh()
 
     def OnGetItemText(self, item, col):
-        if item >= len(self.data): return ""
+        if item >= len(self.data):
+            return ""
         row = self.data[item]
-        if col == 0: return row['address']
-        if col == 1: return row['client']
-        if col == 2: return f"{row['progress']*100:.1f}%"
-        if col == 3: return self.fmt_speed(row['down_rate'])
-        if col == 4: return self.fmt_speed(row['up_rate'])
+        if col == 0:
+            return row['address']
+        if col == 1:
+            return row['client']
+        if col == 2:
+            return f"{row['progress']*100:.1f}%"
+        if col == 3:
+            return self.fmt_speed(row['down_rate'])
+        if col == 4:
+            return self.fmt_speed(row['up_rate'])
         return ""
 
     def fmt_speed(self, rate):
-        if rate <= 0: return "0 B/s"
+        if rate <= 0:
+            return "0 B/s"
         for unit in ['B/s', 'KB/s', 'MB/s', 'GB/s']:
-            if rate < 1024: return f"{rate:.1f} {unit}"
+            if rate < 1024:
+                return f"{rate:.1f} {unit}"
             rate /= 1024
         return f"{rate:.1f} TB/s"
 
@@ -1612,12 +1636,17 @@ class TrackersListCtrl(wx.ListCtrl):
         self.Refresh()
 
     def OnGetItemText(self, item, col):
-        if item >= len(self.data): return ""
+        if item >= len(self.data):
+            return ""
         row = self.data[item]
-        if col == 0: return row['url']
-        if col == 1: return row['status']
-        if col == 2: return str(row['peers'])
-        if col == 3: return row['message']
+        if col == 0:
+            return row['url']
+        if col == 1:
+            return row['status']
+        if col == 2:
+            return str(row['peers'])
+        if col == 3:
+            return row['message']
         return ""
 
 class TorrentDetailsPanel(wx.Panel):
@@ -1683,19 +1712,22 @@ class TorrentDetailsPanel(wx.Panel):
         try:
             files = self.frame.client.get_files(info_hash)
             wx.CallAfter(self.files_list.set_data, files)
-        except Exception: pass
+        except Exception:
+            pass
 
     def _fetch_peers(self, info_hash):
         try:
             peers = self.frame.client.get_peers(info_hash)
             wx.CallAfter(self.peers_list.set_data, peers)
-        except Exception: pass
+        except Exception:
+            pass
 
     def _fetch_trackers(self, info_hash):
         try:
             trackers = self.frame.client.get_trackers(info_hash)
             wx.CallAfter(self.trackers_list.set_data, trackers)
-        except Exception: pass
+        except Exception:
+            pass
 
     def on_files_context_menu(self, event):
         if not self.files_list.GetSelectedItemCount():
@@ -1718,7 +1750,8 @@ class TorrentDetailsPanel(wx.Panel):
         menu.Destroy()
 
     def set_priority(self, priority):
-        if not self.current_hash or not self.frame.client: return
+        if not self.current_hash or not self.frame.client:
+            return
         
         # Get selected indices
         item = self.files_list.GetFirstSelected()
@@ -1864,8 +1897,10 @@ class ArticleListCtrl(wx.ListCtrl):
     def OnGetItemText(self, item, col):
         if item < len(self.panel.current_articles):
             a = self.panel.current_articles[item]
-            if col == 0: return a['title']
-            if col == 1: return a['link']
+            if col == 0:
+                return a['title']
+            if col == 1:
+                return a['link']
         return ""
 
 class RuleEditDialog(wx.Dialog):
@@ -2489,6 +2524,7 @@ class MainFrame(wx.Frame):
         web_server.WEB_CONFIG['app'] = self
         web_server.WEB_CONFIG['client'] = self.client
         web_server.WEB_CONFIG['enabled'] = prefs.get('web_ui_enabled', False)
+        web_server.WEB_CONFIG['host'] = prefs.get('web_ui_host', '127.0.0.1')
         web_server.WEB_CONFIG['port'] = prefs.get('web_ui_port', 8080)
         web_server.WEB_CONFIG['username'] = prefs.get('web_ui_user', 'admin')
         web_server.WEB_CONFIG['password'] = prefs.get('web_ui_pass', 'password')
@@ -2781,10 +2817,14 @@ class MainFrame(wx.Frame):
             return
 
         name = "Remote Client"
-        if isinstance(self.client, QBittorrentClient): name = "qBittorrent"
-        elif isinstance(self.client, RTorrentClient): name = "rTorrent"
-        elif isinstance(self.client, TransmissionClient): name = "Transmission"
-        elif isinstance(self.client, LocalClient): name = "Local"
+        if isinstance(self.client, QBittorrentClient):
+            name = "qBittorrent"
+        elif isinstance(self.client, RTorrentClient):
+            name = "rTorrent"
+        elif isinstance(self.client, TransmissionClient):
+            name = "Transmission"
+        elif isinstance(self.client, LocalClient):
+            name = "Local"
 
         self.statusbar.SetStatusText(f"Fetching {name} preferences...", 0)
         self.thread_pool.submit(self._fetch_remote_preferences)
@@ -2807,10 +2847,14 @@ class MainFrame(wx.Frame):
             return
 
         client_name = "Remote"
-        if isinstance(self.client, QBittorrentClient): client_name = "qBittorrent"
-        elif isinstance(self.client, RTorrentClient): client_name = "rTorrent"
-        elif isinstance(self.client, TransmissionClient): client_name = "Transmission"
-        elif isinstance(self.client, LocalClient): client_name = "Local"
+        if isinstance(self.client, QBittorrentClient):
+            client_name = "qBittorrent"
+        elif isinstance(self.client, RTorrentClient):
+            client_name = "rTorrent"
+        elif isinstance(self.client, TransmissionClient):
+            client_name = "Transmission"
+        elif isinstance(self.client, LocalClient):
+            client_name = "Local"
 
         dlg = RemotePreferencesDialog(self, prefs, client_name)
         if dlg.ShowModal() == wx.ID_OK:
@@ -2825,10 +2869,14 @@ class MainFrame(wx.Frame):
         try:
             self.client.set_app_preferences(prefs)
             name = "Remote"
-            if isinstance(self.client, QBittorrentClient): name = "qBittorrent"
-            elif isinstance(self.client, RTorrentClient): name = "rTorrent"
-            elif isinstance(self.client, TransmissionClient): name = "Transmission"
-            elif isinstance(self.client, LocalClient): name = "Local"
+            if isinstance(self.client, QBittorrentClient):
+                name = "qBittorrent"
+            elif isinstance(self.client, RTorrentClient):
+                name = "rTorrent"
+            elif isinstance(self.client, TransmissionClient):
+                name = "Transmission"
+            elif isinstance(self.client, LocalClient):
+                name = "Local"
             
             wx.CallAfter(self.statusbar.SetStatusText, f"{name} preferences saved", 0)
             wx.CallAfter(self._update_client_default_save_path)
@@ -2870,7 +2918,8 @@ class MainFrame(wx.Frame):
 
     def connect_profile(self, pid):
         p = self.config_manager.get_profile(pid)
-        if not p: return
+        if not p:
+            return
         
         self.current_profile_id = pid
         self.client_default_save_path = None
@@ -2966,7 +3015,8 @@ class MainFrame(wx.Frame):
             self.rss_panel.on_refresh_all(None)
 
     def refresh_data(self):
-        if not self.client or self.refreshing: return
+        if not self.client or self.refreshing:
+            return
         
         self.refreshing = True
         filter_mode = self.current_filter
@@ -2995,22 +3045,34 @@ class MainFrame(wx.Frame):
                 is_error = bool(msg and clean_status_message(msg))
                 
                 stats["All"] += 1
-                if state == 1 and pct < 100: stats["Downloading"] += 1
-                if pct >= 100: stats["Finished"] += 1
-                if is_seeding: stats["Seeding"] += 1
-                if is_stopped: stats["Stopped"] += 1
-                if is_error: stats["Failed"] += 1
+                if state == 1 and pct < 100:
+                    stats["Downloading"] += 1
+                if pct >= 100:
+                    stats["Finished"] += 1
+                if is_seeding:
+                    stats["Seeding"] += 1
+                if is_stopped:
+                    stats["Stopped"] += 1
+                if is_error:
+                    stats["Failed"] += 1
                 
                 tracker_counts[tracker_domain] = tracker_counts.get(tracker_domain, 0) + 1
                     
                 include = False
-                if filter_mode == "All": include = True
-                elif filter_mode == "Downloading" and state == 1 and pct < 100: include = True
-                elif filter_mode == "Finished" and pct >= 100: include = True
-                elif filter_mode == "Seeding" and is_seeding: include = True
-                elif filter_mode == "Stopped" and is_stopped: include = True
-                elif filter_mode == "Failed" and is_error: include = True
-                elif filter_mode == tracker_domain: include = True
+                if filter_mode == "All":
+                    include = True
+                elif filter_mode == "Downloading" and state == 1 and pct < 100:
+                    include = True
+                elif filter_mode == "Finished" and pct >= 100:
+                    include = True
+                elif filter_mode == "Seeding" and is_seeding:
+                    include = True
+                elif filter_mode == "Stopped" and is_stopped:
+                    include = True
+                elif filter_mode == "Failed" and is_error:
+                    include = True
+                elif filter_mode == tracker_domain:
+                    include = True
                 
                 if include:
                     # Keep raw data for virtual list formatting
@@ -3019,7 +3081,8 @@ class MainFrame(wx.Frame):
             g_down, g_up = 0, 0
             try:
                 g_down, g_up = self.client.get_global_stats()
-            except: pass
+            except Exception:
+                pass
             
             wx.CallAfter(self._on_refresh_complete, generation, torrents, display_data, stats, tracker_counts, g_down, g_up)
             
@@ -3099,7 +3162,8 @@ class MainFrame(wx.Frame):
             return []
         
         url = prefs.get('tracker_url', '')
-        if not url: return []
+        if not url:
+            return []
 
         try:
             # Simple caching
@@ -3139,7 +3203,7 @@ class MainFrame(wx.Frame):
                         name = info.name()
                         num = info.num_files()
                         file_list = [(info.files().file_path(i), info.files().file_size(i)) for i in range(num)]
-                    except Exception as e:
+                    except Exception:
                         pass
 
                 # Use the cached client default (remote path when connected, fallback to preferences)
@@ -3227,7 +3291,8 @@ class MainFrame(wx.Frame):
                 name = info.name()
                 num = info.num_files()
                 file_list = [(info.files().file_path(i), info.files().file_size(i)) for i in range(num)]
-            except: pass
+            except Exception:
+                pass
         
         adlg = AddTorrentDialog(self, name, file_list, default_path)
         if adlg.ShowModal() == wx.ID_OK:
@@ -3590,7 +3655,7 @@ class MainFrame(wx.Frame):
             if result.get("info_hash"):
                 msg += f"\nInfo Hash: {result['info_hash']}"
             if result.get("magnet"):
-                msg += f"\nMagnet copied to clipboard." if opts.get("copy_magnet") else f"\nMagnet: {result['magnet']}"
+                msg += "\nMagnet copied to clipboard." if opts.get("copy_magnet") else f"\nMagnet: {result['magnet']}"
             wx.MessageBox(msg, "Create Torrent", wx.OK | wx.ICON_INFORMATION)
 
         wx.CallLater(200, poll)
@@ -3641,7 +3706,8 @@ class MainFrame(wx.Frame):
 
     def on_filter_change(self, event):
         item = event.GetItem()
-        if not item.IsOk(): return
+        if not item.IsOk():
+            return
 
         target_window = self.right_splitter
         if item == self.rss_id:
@@ -3675,7 +3741,6 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def on_list_key(self, event):
-        code = event.GetKeyCode()
         event.Skip()
 
     def on_context_menu(self, event):

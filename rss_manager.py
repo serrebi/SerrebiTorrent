@@ -2,7 +2,7 @@ import json
 import os
 import re
 import requests
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 from app_paths import get_data_dir
 
 RSS_FILE = os.path.join(get_data_dir(), "rss.json")
@@ -20,8 +20,8 @@ class RSSManager:
                     data = json.load(f)
                     self.feeds = data.get('feeds', {})
                     self.rules = data.get('rules', [])
-            except:
-                pass
+            except Exception:
+                return
 
     def save(self):
         data = {'feeds': self.feeds, 'rules': self.rules}
@@ -130,7 +130,8 @@ class RSSManager:
                         if re.search(rule['pattern'], a['title'], re.IGNORECASE):
                             rejected = True
                             break
-                    except: pass
+                    except re.error:
+                        continue
             if rejected:
                 continue
 
@@ -141,7 +142,8 @@ class RSSManager:
                         if re.search(rule['pattern'], a['title'], re.IGNORECASE):
                             matches.append(a)
                             break
-                    except: pass
+                    except re.error:
+                        continue
         return matches
 
     def import_flexget_config(self, path):
@@ -175,7 +177,8 @@ class RSSManager:
             return False
 
         for task_name, task_config in tasks.items():
-            if not isinstance(task_config, dict): continue
+            if not isinstance(task_config, dict):
+                continue
 
             # 0. Profile (qBittorrent)
             qbit = task_config.get('qbittorrent')
@@ -195,12 +198,15 @@ class RSSManager:
             rss_entry = task_config.get('rss')
             if rss_entry:
                 url = ""
-                if isinstance(rss_entry, str): url = rss_entry
-                elif isinstance(rss_entry, dict): url = rss_entry.get('url')
+                if isinstance(rss_entry, str):
+                    url = rss_entry
+                elif isinstance(rss_entry, dict):
+                    url = rss_entry.get('url')
                 
                 if url:
                     task_feed_urls.append(url)
-                    if self.add_feed(url, f"{task_name} RSS"): count_feeds += 1
+                    if self.add_feed(url, f"{task_name} RSS"):
+                        count_feeds += 1
             
             inputs = task_config.get('inputs', [])
             if isinstance(inputs, list):
@@ -208,12 +214,15 @@ class RSSManager:
                     if isinstance(inp, dict) and 'rss' in inp:
                         val = inp['rss']
                         url = ""
-                        if isinstance(val, str): url = val
-                        elif isinstance(val, dict): url = val.get('url')
+                        if isinstance(val, str):
+                            url = val
+                        elif isinstance(val, dict):
+                            url = val.get('url')
                         
                         if url:
                             task_feed_urls.append(url)
-                            if self.add_feed(url, f"{task_name} RSS"): count_feeds += 1
+                            if self.add_feed(url, f"{task_name} RSS"):
+                                count_feeds += 1
 
             # 2. Rules (Regex) - Scope them to task_feed_urls
             regexp = task_config.get('regexp', {})

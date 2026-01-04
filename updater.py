@@ -8,7 +8,7 @@ import re
 import subprocess
 import zipfile
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 import requests
 
@@ -94,7 +94,7 @@ def _is_sha256(value: str) -> bool:
     return bool(value) and re.fullmatch(r"[0-9a-fA-F]{64}", value) is not None
 
 
-def _rate_limit_message(headers: Dict[str, str]) -> str:
+def _rate_limit_message(headers: Mapping[str, str]) -> str:
     reset = headers.get("X-RateLimit-Reset")
     if reset and reset.isdigit():
         reset_dt = datetime.datetime.utcfromtimestamp(int(reset))

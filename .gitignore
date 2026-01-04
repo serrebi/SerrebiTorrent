@@ -1,1 +1,8 @@
 SerrebiTorrent.exe
+__pycache__/
+*.pyc
+.hypothesis/
+build/
+dist/
+release_notes.txt
+SerrebiTorrent_Data/

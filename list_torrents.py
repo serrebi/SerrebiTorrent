@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 
 import sys
 import os
-import json
 
 # Add current dir to path for imports
 sys.path.insert(0, os.path.dirname(__file__))

@@ -6,3 +6,5 @@ ruff
 mypy
 bandit
 pip-audit
+types-requests
+types-PyYAML

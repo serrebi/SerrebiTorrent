@@ -1,11 +1,12 @@
+# ruff: noqa: E402
+
 import abc
-import time
-from urllib.parse import urlparse
-import requests
 import binascii
 import os
+from urllib.parse import quote, urlparse
 
-from app_paths import get_log_path
+import requests
+
 from libtorrent_env import prepare_libtorrent_dlls
 
 def _safe_tracker_domain(tracker_url):
@@ -162,8 +163,14 @@ class BaseClient(abc.ABC):
         pass
 
 # --- rTorrent ---
-import xmlrpc.client
-import ssl, socket, io
+from defusedxml.xmlrpc import monkey_patch as _defusedxml_xmlrpc_monkey_patch
+
+_defusedxml_xmlrpc_monkey_patch()
+
+import xmlrpc.client  # nosec B411
+import io
+import socket
+import ssl
 
 class CookieTransport(xmlrpc.client.SafeTransport):
     def __init__(self, c=None, ck=None):
@@ -196,7 +203,8 @@ class SCGITransport(xmlrpc.client.Transport):
                 rd = b""
                 while True:
                     ch = s.recv(4096)
-                    if not ch: break
+                    if not ch:
+                        break
                     rd += ch
         except Exception as e:
             raise xmlrpc.client.ProtocolError(h+hn, 500, str(e), {})
@@ -214,7 +222,8 @@ class SCGITransport(xmlrpc.client.Transport):
         p, u = self.getparser()
         while True:
             data = response_file.read(1024)
-            if not data: break
+            if not data:
+                break
             p.feed(data)
         response_file.close()
         p.close()
@@ -224,17 +233,29 @@ class RTorrentClient(BaseClient):
     def __init__(self, u, us=None, pw=None):
         if not u.startswith(('http://', 'https://', 'scgi://')):
             u = 'http://' + u
-        self.u, self.us, self.pw, self.ck, self.ctx, self.tc = u, us, pw, {}, ssl._create_unverified_context(), {} 
         p = urlparse(u)
+        if us and pw is not None and p.scheme != "scgi" and not p.username and p.hostname:
+            user = quote(us, safe="")
+            password = quote(pw, safe="")
+            host = p.hostname
+            if ":" in host and not host.startswith("["):
+                host = f"[{host}]"
+            port = f":{p.port}" if p.port else ""
+            u = p._replace(netloc=f"{user}:{password}@{host}{port}").geturl()
+            p = urlparse(u)
+
+        self.u, self.us, self.pw, self.ck, self.tc = u, us, pw, {}, {}
+        self.ctx = None
+        if p.scheme == "https":
+            self.ctx = ssl.create_default_context()
+            if os.environ.get("SERREBITORRENT_INSECURE_SSL", "").strip().lower() in ("1", "true", "yes"):
+                self.ctx.check_hostname = False
+                self.ctx.verify_mode = ssl.CERT_NONE
+
         if p.scheme == "scgi":
             self.srv = xmlrpc.client.ServerProxy("http://d", transport=SCGITransport(p.hostname, p.port))
         else:
-            try:
-                r = requests.get(u, verify=False, allow_redirects=False, timeout=5)
-                if r.status_code == 401 and us and "@" not in u:
-                    u = p._replace(netloc=f"{us}:{pw}@{p.netloc}").geturl()
-            except: pass
-            self.srv = xmlrpc.client.ServerProxy(u, transport=CookieTransport(self.ctx, self.ck), context=self.ctx)
+            self.srv = xmlrpc.client.ServerProxy(u, context=self.ctx)
 
     def _rpc(self, name, *args, default=None):
         try:
@@ -250,18 +271,23 @@ class RTorrentClient(BaseClient):
         return self.srv.system.client_version()
 
     def _si(self, v):
-        if isinstance(v, (list, tuple)) and v: return self._si(v[0])
-        try: return int(v)
-        except: return 0
+        if isinstance(v, (list, tuple)) and v:
+            return self._si(v[0])
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
 
     def _ss(self, v):
-        if isinstance(v, (list, tuple)) and v: return self._ss(v[0])
+        if isinstance(v, (list, tuple)) and v:
+            return self._ss(v[0])
         return str(v)
 
     def get_torrents_full(self):
         try:
             raw = self.srv.d.multicall2("", "main", "d.hash=", "d.bytes_done=", "d.up.total=", "d.ratio=", "d.state=", "d.is_active=", "d.is_hash_checking=", "d.message=", "d.down.rate=", "d.up.rate=", "d.name=", "d.size_bytes=", "d.left_bytes=", "d.connection_seed=", "d.connection_leech=", "d.peers_complete=", "d.peers_accounted=", "d.directory=")
-            if not raw: return []
+            if not raw:
+                return []
             res = []
             for t in raw:
                 h, dr, lb = t[0], self._si(t[8]), self._si(t[12])
@@ -273,15 +299,32 @@ class RTorrentClient(BaseClient):
             print(f"RTorrent error: {e}")
             return []
 
-    def start_torrent(self, h): self.srv.d.open(h); self.srv.d.start(h)
-    def stop_torrent(self, h): self.srv.d.stop(h); self.srv.d.close(h)
-    def remove_torrent(self, h): self.srv.d.erase(h)
-    def remove_torrent_with_data(self, h): self.srv.d.erase(h)
-    def add_torrent_url(self, u, sp=None): self.srv.load.start("", u)
-    def add_torrent_file(self, c, sp=None, p=None): self.srv.load.raw_start("", xmlrpc.client.Binary(c))
+    def start_torrent(self, h):
+        self.srv.d.open(h)
+        self.srv.d.start(h)
+
+    def stop_torrent(self, h):
+        self.srv.d.stop(h)
+        self.srv.d.close(h)
+
+    def remove_torrent(self, h):
+        self.srv.d.erase(h)
+
+    def remove_torrent_with_data(self, h):
+        self.srv.d.erase(h)
+
+    def add_torrent_url(self, u, sp=None):
+        self.srv.load.start("", u)
+
+    def add_torrent_file(self, c, sp=None, p=None):
+        self.srv.load.raw_start("", xmlrpc.client.Binary(c))
+
     def get_global_stats(self):
-        try: return self.srv.throttle.global_down.rate(), self.srv.throttle.global_up.rate()
-        except: return 0, 0
+        try:
+            return self.srv.throttle.global_down.rate(), self.srv.throttle.global_up.rate()
+        except Exception:
+            return 0, 0
+
     def get_app_preferences(self):
         prefs = {
             "dl_limit": self._rpc("throttle.global_down.max_rate"),
@@ -332,42 +375,64 @@ class RTorrentClient(BaseClient):
             if key in ("pex_enabled", "use_udp_trackers", "check_hash"):
                 val = 1 if bool(val) else 0
             self._rpc(method, val)
-    def recheck_torrent(self, h): self.srv.d.check_hash(h)
-    def reannounce_torrent(self, h): self.srv.d.tracker_announce(h)
-    def get_torrent_save_path(self, h): return self.srv.d.directory(h)
+
+    def recheck_torrent(self, h):
+        self.srv.d.check_hash(h)
+
+    def reannounce_torrent(self, h):
+        self.srv.d.tracker_announce(h)
+
+    def get_torrent_save_path(self, h):
+        return self.srv.d.directory(h)
+
     def get_files(self, h):
         try:
             r = self.srv.f.multicall(h, "", "f.get_path=", "f.get_size_bytes=", "f.get_priority=", "f.get_completed_chunks=", "f.get_size_chunks=")
             return [{"index": i, "name": x[0], "size": x[1], "progress": x[3]/x[4] if x[4]>0 else 0, "priority": x[2]} for i, x in enumerate(r)]
-        except: return []
-    def set_file_priority(self, h, i, p): self.srv.f.priority.set(h, i, p); self.srv.d.update_priorities(h)
+        except Exception:
+            return []
+
+    def set_file_priority(self, h, i, p):
+        self.srv.f.priority.set(h, i, p)
+        self.srv.d.update_priorities(h)
+
     def get_peers(self, h):
         try:
             r = self.srv.p.multicall(h, "", "p.address=", "p.client_version=", "p.completed_percent=", "p.down_rate=", "p.up_rate=")
             return [{"address": str(x[0]), "client": str(x[1]), "progress": float(x[2])/100.0, "down_rate": int(x[3]), "up_rate": int(x[4])} for x in r]
-        except: return []
+        except Exception:
+            return []
+
     def get_trackers(self, h):
         try:
             r = self.srv.t.multicall(h, "", "t.url=", "t.is_enabled=", "t.scrape_complete=")
             return [{"url": str(x[0]), "status": "Enabled" if x[1] else "Disabled", "peers": int(x[2]) if x[2] else 0, "message": ""} for x in r]
-        except: return []
+        except Exception:
+            return []
 
 # --- qBit ---
 import qbittorrentapi
 class QBittorrentClient(BaseClient):
     def __init__(self, u, us, pw):
-        if not u.startswith(('http://', 'https://')): u = 'http://' + u
-        self.c = qbittorrentapi.Client(host=u, username=us, password=pw); self.c.auth_log_in()
+        if not u.startswith(('http://', 'https://')):
+            u = 'http://' + u
+        self.c = qbittorrentapi.Client(host=u, username=us, password=pw)
+        self.c.auth_log_in()
+
     def test_connection(self): return self.c.app_version()
     def get_torrents_full(self):
         try:
-            ts = self.c.torrents_info(); res = []
+            ts = self.c.torrents_info()
+            res = []
             for t in ts:
                 sv, av, hv = 0, 0, 0
                 s = t.state
-                if s in ['downloading', 'uploading', 'stalledDL', 'stalledUP', 'metaDL', 'forcedDL', 'forcedUP', 'queuedDL', 'queuedUP']: sv, av = 1, 1
-                elif s in ['pausedDL', 'pausedUP']: sv = 0
-                elif 'checking' in s: hv, sv = 1, 1
+                if s in ['downloading', 'uploading', 'stalledDL', 'stalledUP', 'metaDL', 'forcedDL', 'forcedUP', 'queuedDL', 'queuedUP']:
+                    sv, av = 1, 1
+                elif s in ['pausedDL', 'pausedUP']:
+                    sv = 0
+                elif 'checking' in s:
+                    hv, sv = 1, 1
                 tracker_domain = _safe_tracker_domain(getattr(t, "tracker", "") or "")
                 res.append({"hash": t.hash, "name": t.name, "size": t.total_size, "done": t.completed, "up_total": t.uploaded, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": "", "down_rate": t.dlspeed, "up_rate": t.upspeed, "tracker_domain": tracker_domain, "eta": int(getattr(t, "eta", -1) or -1), "seeds_connected": int(getattr(t, "num_seeds", 0) or 0), "seeds_total": int(getattr(t, "num_complete", 0) or 0), "leechers_connected": int(getattr(t, "num_leechs", 0) or 0), "leechers_total": int(getattr(t, "num_incomplete", 0) or 0), "availability": getattr(t, "availability", None), "save_path": getattr(t, "save_path", None)})
             return res
@@ -380,13 +445,16 @@ class QBittorrentClient(BaseClient):
     def remove_torrent_with_data(self, h): self.c.torrents_delete(torrent_hashes=h, delete_files=True)
     def remove_torrents(self, hs, df=False):
         hashes = self._normalize_hashes(hs)
-        if not hashes: return
+        if not hashes:
+            return
         self.c.torrents_delete(torrent_hashes=hashes, delete_files=self._normalize_delete_files(df))
     def add_torrent_url(self, u, sp=None): self.c.torrents_add(urls=u, save_path=sp)
     def add_torrent_file(self, c, sp=None, p=None): self.c.torrents_add(torrent_files=c, save_path=sp)
     def recheck_torrent(self, h): self.c.torrents_recheck(torrent_hashes=h)
     def reannounce_torrent(self, h): self.c.torrents_reannounce(torrent_hashes=h)
-    def get_global_stats(self): i = self.c.transfer_info(); return i.dl_info_speed, i.up_info_speed
+    def get_global_stats(self):
+        i = self.c.transfer_info()
+        return i.dl_info_speed, i.up_info_speed
     def get_app_preferences(self):
         try:
             return dict(self.c.app_preferences())
@@ -420,16 +488,21 @@ class TransmissionClient(BaseClient):
     def __init__(self, u, us, pw):
         if not u.startswith(('http://', 'https://')):
             u = 'http://' + u
-        p = urlparse(u); self.c = TransClient(host=p.hostname, port=p.port, username=us, password=pw, protocol=p.scheme)
+        p = urlparse(u)
+        self.c = TransClient(host=p.hostname, port=p.port, username=us, password=pw, protocol=p.scheme)
     def test_connection(self): return self.c.server_version
     def get_torrents_full(self):
         try:
-            ts = self.c.get_torrents(); res = []
+            ts = self.c.get_torrents()
+            res = []
             for t in ts:
                 sv, av, hv = 0, 0, 0
-                if t.status == 'stopped': sv = 0
-                elif t.status in ['checking', 'check pending']: hv, sv = 1, 1
-                else: sv, av = 1, 1
+                if t.status == 'stopped':
+                    sv = 0
+                elif t.status in ['checking', 'check pending']:
+                    hv, sv = 1, 1
+                else:
+                    sv, av = 1, 1
                 tracker_url = t.trackers[0].announce if t.trackers else ""
                 tracker_domain = _safe_tracker_domain(tracker_url)
                 res.append({"hash": t.hashString, "name": t.name, "size": t.total_size, "done": t.downloaded_ever, "up_total": t.uploaded_ever, "ratio": t.ratio * 1000, "state": sv, "active": av, "hashing": hv, "message": t.error_string, "down_rate": t.rate_download, "up_rate": t.rate_upload, "tracker_domain": tracker_domain, "eta": int(getattr(t, "eta", -1)), "seeds_connected": t.peersSendingToUs, "seeds_total": t.seeders, "leechers_connected": t.peersGettingFromUs, "leechers_total": t.leechers, "availability": None, "save_path": getattr(t, "download_dir", None)})
@@ -443,7 +516,8 @@ class TransmissionClient(BaseClient):
     def remove_torrent_with_data(self, h): self.c.remove_torrent(h, delete_data=True)
     def add_torrent_url(self, u, sp=None): self.c.add_torrent(u, download_dir=sp)
     def add_torrent_file(self, c, sp=None, p=None):
-        import base64; self.c.add_torrent(base64.b64encode(c).decode('utf-8'), download_dir=sp)
+        import base64
+        self.c.add_torrent(base64.b64encode(c).decode('utf-8'), download_dir=sp)
     def recheck_torrent(self, h): self.c.verify_torrent(h)
     def reannounce_torrent(self, h): self.c.reannounce_torrent(h)
     def get_global_stats(self):
@@ -519,15 +593,19 @@ class TransmissionClient(BaseClient):
         t = self.c.get_torrent(h)
         return getattr(t, 'download_dir', None) or getattr(t, 'downloadDir', None)
     def get_files(self, h):
-        t = self.c.get_torrent(h, arguments=['files', 'fileStats']); res = []
+        t = self.c.get_torrent(h, arguments=['files', 'fileStats'])
+        res = []
         for i, f in enumerate(t.files):
             s = t.fileStats[i]
             res.append({"index": i, "name": f.name, "size": f.length, "progress": f.bytesCompleted/f.length if f.length>0 else 0, "priority": 0 if not s.wanted else (2 if s.priority>0 else 1)})
         return res
     def set_file_priority(self, h, i, p):
         args = {}
-        if p == 0: args['files_unwanted'] = [i]
-        else: args['files_wanted'] = [i]; args['priority_high' if p==2 else 'priority_normal'] = [i]
+        if p == 0:
+            args['files_unwanted'] = [i]
+        else:
+            args['files_wanted'] = [i]
+            args['priority_high' if p == 2 else 'priority_normal'] = [i]
         self.c.change_torrent(h, **args)
     def get_peers(self, h):
         t = self.c.get_torrent(h, arguments=['peers'])
@@ -538,75 +616,110 @@ class TransmissionClient(BaseClient):
 
 # --- Local ---
 prepare_libtorrent_dlls()
-try: import libtorrent as lt
-except ImportError: lt = None
+try:
+    import libtorrent as lt
+except ImportError:
+    lt = None
 from session_manager import SessionManager
 class LocalClient(BaseClient):
     def __init__(self, dp, us=None, pw=None):
-        if not lt: raise RuntimeError("libtorrent not found.")
-        self.m = SessionManager.get_instance(); self.dp = dp if dp and os.path.isdir(dp) else os.getcwd()
+        if not lt:
+            raise RuntimeError("libtorrent not found.")
+        self.m = SessionManager.get_instance()
+        self.dp = dp if dp and os.path.isdir(dp) else os.getcwd()
     def _edp(self):
-        from config_manager import ConfigManager; p = ConfigManager().get_preferences().get('download_path')
+        from config_manager import ConfigManager
+        p = ConfigManager().get_preferences().get('download_path')
         return p if p and os.path.isdir(p) else self.dp
     def test_connection(self): return f"libtorrent {lt.version}"
     def get_torrents_full(self):
-        try: hs = self.m.get_torrents()
-        except: return []
+        try:
+            hs = self.m.get_torrents()
+        except Exception:
+            return []
         res = []
         for h in hs:
             try:
-                if not h.is_valid(): continue
-                s = h.status(); sv = 0 if (s.paused and not s.auto_managed) else 1
-                av = 1 if (sv==1 and s.state not in [lt.torrent_status.seeding, lt.torrent_status.finished]) else (1 if s.state==lt.torrent_status.seeding else 0)
+                if not h.is_valid():
+                    continue
+                s = h.status()
+                sv = 0 if (s.paused and not s.auto_managed) else 1
+                if sv == 1 and s.state not in [lt.torrent_status.seeding, lt.torrent_status.finished]:
+                    av = 1
+                elif s.state == lt.torrent_status.seeding:
+                    av = 1
+                else:
+                    av = 0
                 hv = 1 if s.state in [lt.torrent_status.checking_files, lt.torrent_status.queued_for_checking] else 0
-                ih = h.info_hash(); ihs = str(ih)
-                if len(ihs) != 40: ihs = binascii.hexlify(ih.to_string()).decode('ascii')
+                ih = h.info_hash()
+                ihs = str(ih)
+                if len(ihs) != 40:
+                    ihs = binascii.hexlify(ih.to_string()).decode('ascii')
                 ratio = (s.all_time_upload / s.all_time_download * 1000) if s.all_time_download > 0 else 0
                 eta = int((s.total_wanted - s.total_wanted_done) / s.download_payload_rate) if s.download_payload_rate > 0 else -1
                 ac = None
                 try:
-                    if hasattr(s, "distributed_copies"): ac = float(s.distributed_copies)
-                    elif hasattr(s, "distributed_full_copies"): ac = float(s.distributed_full_copies) + (float(getattr(s, "distributed_fraction", 0)) / 1000.0)
-                except: pass
+                    if hasattr(s, "distributed_copies"):
+                        ac = float(s.distributed_copies)
+                    elif hasattr(s, "distributed_full_copies"):
+                        ac = float(s.distributed_full_copies) + (float(getattr(s, "distributed_fraction", 0)) / 1000.0)
+                except Exception:
+                    pass
                 tracker_domain = _safe_tracker_domain(getattr(s, "current_tracker", "") or "")
                 res.append({"hash": str(ihs), "name": str(s.name if s.name else ihs), "size": int(s.total_wanted), "done": int(s.total_wanted_done), "up_total": int(s.all_time_upload), "ratio": int(ratio), "state": int(sv), "active": int(av), "hashing": int(hv), "message": str(s.errc.message() if s.errc else ""), "down_rate": int(s.download_payload_rate), "up_rate": int(s.upload_payload_rate), "tracker_domain": tracker_domain, "save_path": str(getattr(s, 'save_path', None) or self._edp()), "eta": int(eta), "seeds_connected": int(getattr(s, 'num_seeds', 0)), "seeds_total": int(s.num_complete), "leechers_connected": int(max(0, int(getattr(s, 'num_peers', s.num_connections)) - int(getattr(s, 'num_seeds', 0)))), "leechers_total": int(s.num_incomplete), "availability": ac})
-            except: continue
+            except Exception:
+                continue
         return res
     def start_torrent(self, h):
         x = self._gh(h)
-        if x: x.resume()
+        if x:
+            x.resume()
     def stop_torrent(self, h):
         x = self._gh(h)
-        if x: x.pause()
+        if x:
+            x.pause()
     def remove_torrent(self, h): self.m.remove_torrent(h, False)
     def remove_torrent_with_data(self, h): self.m.remove_torrent(h, True)
     def add_torrent_url(self, u, sp=None):
         fp = sp or self._edp()
-        if u.startswith("magnet:"): self.m.add_magnet(u, fp)
+        if u.startswith("magnet:"):
+            self.m.add_magnet(u, fp)
         else:
-            r = requests.get(u, timeout=30); r.raise_for_status()
+            r = requests.get(u, timeout=30)
+            r.raise_for_status()
             self.m.add_torrent_file(r.content, fp)
     def add_torrent_file(self, c, sp=None, pr=None): self.m.add_torrent_file(c, sp or self._edp(), pr)
-    def get_global_stats(self): st = self.m.get_status(); return st.payload_download_rate, st.payload_upload_rate
+    def get_global_stats(self):
+        st = self.m.get_status()
+        return st.payload_download_rate, st.payload_upload_rate
     def _gh(self, i):
         for h in self.m.get_torrents():
-            ih = h.info_hash(); ihs = str(ih)
-            if len(ihs) != 40: ihs = binascii.hexlify(ih.to_string()).decode('ascii')
-            if ihs == i: return h
+            ih = h.info_hash()
+            ihs = str(ih)
+            if len(ihs) != 40:
+                ihs = binascii.hexlify(ih.to_string()).decode('ascii')
+            if ihs == i:
+                return h
         return None
     def recheck_torrent(self, h):
         x = self._gh(h)
-        if x: x.force_recheck()
+        if x:
+            x.force_recheck()
     def reannounce_torrent(self, h):
         x = self._gh(h)
-        if x: x.force_reannounce()
+        if x:
+            x.force_reannounce()
     def get_torrent_save_path(self, h):
         x = self._gh(h)
         return getattr(x.status(), 'save_path', None) if x else None
     def get_files(self, h):
         x = self._gh(h)
-        if not x or not x.has_metadata(): return []
-        ti = x.get_torrent_info(); fs = ti.files(); pr = x.file_progress(); prio = x.file_priorities()
+        if not x or not x.has_metadata():
+            return []
+        ti = x.get_torrent_info()
+        fs = ti.files()
+        pr = x.file_progress()
+        prio = x.file_priorities()
         return [{"index": i, "name": fs.file_path(i), "size": fs.file_size(i), "progress": pr[i]/fs.file_size(i) if fs.file_size(i)>0 else 0, "priority": 1 if prio[i]==4 else (2 if prio[i]>4 else 0)} for i in range(ti.num_files())]
     def set_file_priority(self, h, i, p):
         x = self._gh(h)
@@ -615,11 +728,13 @@ class LocalClient(BaseClient):
             self.m.update_priorities(h, x.file_priorities())
     def get_peers(self, h):
         x = self._gh(h)
-        if not x: return []
+        if not x:
+            return []
         return [{"address": str(p.ip), "client": str(p.client), "progress": float(p.progress), "down_rate": int(p.down_speed), "up_rate": int(p.up_speed)} for p in x.get_peer_info()]
     def get_trackers(self, h):
         x = self._gh(h)
-        if not x: return []
+        if not x:
+            return []
         return [{"url": str(t['url']), "status": "Working" if t['verified'] else "?", "peers": 0, "message": str(t.get('message',''))} for t in x.trackers()]
     def get_app_preferences(self):
         from config_manager import ConfigManager

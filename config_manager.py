@@ -49,6 +49,7 @@ DEFAULT_PREFERENCES: Dict[str, Any] = {
     "tracker_url": "https://raw.githubusercontent.com/scriptzteam/BitTorrent-Tracker-List/refs/heads/main/trackers_best.txt",
     "rss_update_interval": 300,  # Default 5 minutes
     "web_ui_enabled": False,
+    "web_ui_host": "127.0.0.1",
     "web_ui_port": 8080,
     "web_ui_user": "admin",
     "web_ui_pass": "password",

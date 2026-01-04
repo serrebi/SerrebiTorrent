@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import os
 import threading
 import time
@@ -157,7 +159,7 @@ class SessionManager:
                         elif isinstance(alert, lt.metadata_received_alert):
                             # ... handle metadata ...
                             pass
-            except Exception as e:
+            except Exception:
                 # Suppress session-level RTTI/Access violations
                 time.sleep(1)
                 continue
@@ -297,9 +299,11 @@ class SessionManager:
                                     save_path = default_save_path
                                     priorities = None
                                     if ih_from_resume in self.torrents_db:
-                                         entry = self.torrents_db[ih_from_resume]
-                                         if entry.get('save_path'): save_path = entry.get('save_path')
-                                         if entry.get('priorities'): priorities = entry.get('priorities')
+                                        entry = self.torrents_db[ih_from_resume]
+                                        if entry.get('save_path'):
+                                            save_path = entry.get('save_path')
+                                        if entry.get('priorities'):
+                                            priorities = entry.get('priorities')
                                     
                                     params = {'ti': info, 'save_path': save_path}
                                     if priorities:
@@ -334,9 +338,11 @@ class SessionManager:
                                 save_path = default_save_path
                                 priorities = None
                                 if ih in self.torrents_db:
-                                     entry = self.torrents_db[ih]
-                                     if entry.get('save_path'): save_path = entry.get('save_path')
-                                     if entry.get('priorities'): priorities = entry.get('priorities')
+                                    entry = self.torrents_db[ih]
+                                    if entry.get('save_path'):
+                                        save_path = entry.get('save_path')
+                                    if entry.get('priorities'):
+                                        priorities = entry.get('priorities')
 
                                 params = {'ti': info, 'save_path': save_path}
                                 if priorities:
