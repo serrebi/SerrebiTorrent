@@ -24,11 +24,11 @@ Portable data (profiles, preferences, resume data, logs) lives next to the app i
   - **Remote**: point at qBittorrent / Transmission / rTorrent and enter credentials if needed.
 
 ## Settings
-- Application settings: Tools → Application Settings… (or tray icon → Application Settings…)
-- Client/session settings (enabled only when connected): Tools → qBittorrent/Transmission/rTorrent/Local Session Settings…
+- Local session + app settings: Tools → Local Session Settings… (Ctrl+,) (or tray icon → Settings → Local Session Settings…)
+- Remote client settings (enabled only when connected): Tools → qBittorrent/Transmission/rTorrent Remote Settings… (or tray icon → Settings → …)
 
 ## Auto-updater (Windows)
-The app checks GitHub Releases for updates. You can enable/disable the startup check in Application Settings, or run Tools → Check for Updates.
+The app checks GitHub Releases for updates. You can enable/disable the startup check in Local Session Settings, or run Tools → Check for Updates.
 
 Update flow:
 - Downloads the release ZIP from GitHub using the update manifest asset (`SerrebiTorrent-update.json`).
@@ -79,4 +79,3 @@ Need to troubleshoot? Logs live under `SerrebiTorrent_Data\logs` next to the EXE
   - The app closes and restarts on the new version.
   - A backup folder like `<install_dir>_backup_YYYYMMDDHHMMSS` exists next to the install directory.
   - The status bar reports update status or errors clearly.
-
