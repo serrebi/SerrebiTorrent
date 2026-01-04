@@ -2644,8 +2644,15 @@ class MainFrame(wx.Frame):
             helper_copy = os.path.join(staging_root, "update_helper.bat")
             shutil.copy2(helper_src, helper_copy)
 
-            backup_dir = os.path.join(parent_dir, f"{APP_NAME}_Backup_{timestamp}")
-            cmd = ["cmd.exe", "/C", helper_copy, install_dir, new_dir, backup_dir, updater.APP_EXE_NAME]
+            cmd = [
+                "cmd.exe",
+                "/C",
+                helper_copy,
+                str(os.getpid()),
+                install_dir,
+                new_dir,
+                updater.APP_EXE_NAME,
+            ]
             flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             subprocess.Popen(cmd, creationflags=flags, cwd=parent_dir)
             wx.CallAfter(self._on_update_started)
