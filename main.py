@@ -2257,6 +2257,7 @@ class MainFrame(wx.Frame):
         self.client = None
         self.connected = False
         self.all_torrents = []
+        self.data_lock = threading.RLock()
         self.current_filter = "All"
         self.current_profile_id = None
         self.client_generation = 0
@@ -3051,6 +3052,10 @@ class MainFrame(wx.Frame):
         generation = self.client_generation
         self.thread_pool.submit(self._fetch_and_process_data, filter_mode, generation)
 
+    def get_all_torrents_safe(self):
+        with self.data_lock:
+            return list(self.all_torrents)
+
     def _fetch_and_process_data(self, filter_mode, generation):
         try:
             torrents = self.client.get_torrents_full()
@@ -3122,7 +3127,8 @@ class MainFrame(wx.Frame):
         if not self.connected or generation != self.client_generation:
             return
 
-        self.all_torrents = torrents
+        with self.data_lock:
+            self.all_torrents = torrents
         self.torrent_list.update_data(display_data)
         current_hashes = {t.get('hash') for t in torrents if t.get('hash')}
         self.known_hashes = current_hashes

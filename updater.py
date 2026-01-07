@@ -197,15 +197,15 @@ def check_for_update() -> Optional[UpdateInfo]:
 
 def download_file(url: str, dest_path: str) -> None:
     try:
-        response = requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT)
+        with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
+            if response.status_code != 200:
+                raise UpdateError(f"Download failed: {response.status_code} {response.reason}")
+            with open(dest_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
     except requests.RequestException as exc:
         raise UpdateError(f"Network error while downloading update: {exc}") from exc
-    if response.status_code != 200:
-        raise UpdateError(f"Download failed: {response.status_code} {response.reason}")
-    with open(dest_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                f.write(chunk)
 
 
 def compute_sha256(path: str) -> str:

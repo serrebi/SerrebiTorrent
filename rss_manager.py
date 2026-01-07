@@ -2,6 +2,7 @@ import json
 import os
 import re
 import requests
+import threading
 from defusedxml import ElementTree as ET
 from app_paths import get_data_dir
 
@@ -9,62 +10,71 @@ RSS_FILE = os.path.join(get_data_dir(), "rss.json")
 
 class RSSManager:
     def __init__(self):
+        self.lock = threading.RLock()
         self.feeds = {} # url -> {'alias': str, 'last_update': float, 'articles': []}
         self.rules = [] # list of {'pattern': str, 'enabled': bool}
         self.load()
 
     def load(self):
-        if os.path.exists(RSS_FILE):
-            try:
-                with open(RSS_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.feeds = data.get('feeds', {})
-                    self.rules = data.get('rules', [])
-            except Exception:
-                return
+        with self.lock:
+            if os.path.exists(RSS_FILE):
+                try:
+                    with open(RSS_FILE, 'r') as f:
+                        data = json.load(f)
+                        self.feeds = data.get('feeds', {})
+                        self.rules = data.get('rules', [])
+                except Exception:
+                    return
 
     def save(self):
-        data = {'feeds': self.feeds, 'rules': self.rules}
-        try:
-            with open(RSS_FILE, 'w') as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            print(f"Failed to save RSS: {e}")
+        with self.lock:
+            data = {'feeds': self.feeds, 'rules': self.rules}
+            try:
+                with open(RSS_FILE, 'w') as f:
+                    json.dump(data, f, indent=4)
+            except Exception as e:
+                print(f"Failed to save RSS: {e}")
 
     def add_feed(self, url, alias=""):
-        if url not in self.feeds:
-            self.feeds[url] = {'alias': alias, 'last_update': 0, 'articles': []}
-            self.save()
-            return True
-        return False
+        with self.lock:
+            if url not in self.feeds:
+                self.feeds[url] = {'alias': alias, 'last_update': 0, 'articles': []}
+                self.save()
+                return True
+            return False
 
     def remove_feed(self, url):
-        if url in self.feeds:
-            del self.feeds[url]
-            self.save()
+        with self.lock:
+            if url in self.feeds:
+                del self.feeds[url]
+                self.save()
 
     def add_rule(self, pattern, rule_type="accept", scope=None):
         """
         Add a rule.
         scope: None for global, or a list of feed URLs this rule applies to.
         """
-        self.rules.append({'pattern': pattern, 'enabled': True, 'type': rule_type, 'scope': scope})
-        self.save()
+        with self.lock:
+            self.rules.append({'pattern': pattern, 'enabled': True, 'type': rule_type, 'scope': scope})
+            self.save()
 
     def remove_rule(self, index):
-        if 0 <= index < len(self.rules):
-            del self.rules[index]
-            self.save()
+        with self.lock:
+            if 0 <= index < len(self.rules):
+                del self.rules[index]
+                self.save()
 
     def update_rule(self, index, data):
-        if 0 <= index < len(self.rules):
-            self.rules[index].update(data)
-            self.save()
+        with self.lock:
+            if 0 <= index < len(self.rules):
+                self.rules[index].update(data)
+                self.save()
 
     def reset_all(self):
-        self.feeds = {}
-        self.rules = []
-        self.save()
+        with self.lock:
+            self.feeds = {}
+            self.rules = []
+            self.save()
 
     def fetch_feed(self, url):
         try:
@@ -95,26 +105,33 @@ class RSSManager:
                         'uid': t_url # simplified UID
                     })
             
-            if url in self.feeds:
-                self.feeds[url]['articles'] = articles
-                import time
-                self.feeds[url]['last_update'] = time.time()
-                self.feeds[url]['last_error'] = None # Clear error
+            with self.lock:
+                if url in self.feeds:
+                    self.feeds[url]['articles'] = articles
+                    import time
+                    self.feeds[url]['last_update'] = time.time()
+                    self.feeds[url]['last_error'] = None # Clear error
             
             return articles
         except Exception as e:
             err_msg = str(e)
             print(f"RSS Fetch Error {url}: {err_msg}")
-            if url in self.feeds:
-                self.feeds[url]['last_error'] = err_msg
+            with self.lock:
+                if url in self.feeds:
+                    self.feeds[url]['last_error'] = err_msg
             return []
 
     def get_matches(self, articles, feed_url=None):
         matches = []
+        # Rules and feeds might change, so capture a snapshot or lock?
+        # get_matches is read-only usually, but accessing self.rules needs safety if modified elsewhere
+        with self.lock:
+            current_rules = list(self.rules) # Copy
+
         for a in articles:
             # Filter rules applicable to this feed
             applicable_rules = []
-            for r in self.rules:
+            for r in current_rules:
                 if not r.get('enabled', True):
                     continue
                 scope = r.get('scope')
@@ -176,88 +193,95 @@ class RSSManager:
                     return True
             return False
 
-        for task_name, task_config in tasks.items():
-            if not isinstance(task_config, dict):
-                continue
+        with self.lock:
+            for task_name, task_config in tasks.items():
+                if not isinstance(task_config, dict):
+                    continue
 
-            # 0. Profile (qBittorrent)
-            qbit = task_config.get('qbittorrent')
-            if qbit and isinstance(qbit, dict):
-                host = qbit.get('host', 'localhost')
-                port = qbit.get('port', 8080)
-                user = qbit.get('username', '')
-                pw = qbit.get('password', '')
-                
-                url = f"http://{host}:{port}"
-                if not profile_exists(url, user):
-                    cm.add_profile(f"{task_name} qBit", "qbittorrent", url, user, pw)
-
-            # 1. RSS Feeds (Collect task URLs for scoping)
-            task_feed_urls = []
-            
-            rss_entry = task_config.get('rss')
-            if rss_entry:
-                url = ""
-                if isinstance(rss_entry, str):
-                    url = rss_entry
-                elif isinstance(rss_entry, dict):
-                    url = rss_entry.get('url')
-                
-                if url:
-                    task_feed_urls.append(url)
-                    if self.add_feed(url, f"{task_name} RSS"):
-                        count_feeds += 1
-            
-            inputs = task_config.get('inputs', [])
-            if isinstance(inputs, list):
-                for inp in inputs:
-                    if isinstance(inp, dict) and 'rss' in inp:
-                        val = inp['rss']
-                        url = ""
-                        if isinstance(val, str):
-                            url = val
-                        elif isinstance(val, dict):
-                            url = val.get('url')
-                        
-                        if url:
-                            task_feed_urls.append(url)
-                            if self.add_feed(url, f"{task_name} RSS"):
-                                count_feeds += 1
-
-            # 2. Rules (Regex) - Scope them to task_feed_urls
-            regexp = task_config.get('regexp', {})
-            if isinstance(regexp, dict):
-                # Accept
-                accept = regexp.get('accept', [])
-                if isinstance(accept, list):
-                    for pattern in accept:
-                        self.add_rule(str(pattern), "accept", scope=task_feed_urls)
-                        count_rules += 1
-                # Reject
-                reject = regexp.get('reject', [])
-                if isinstance(reject, list):
-                    for pattern in reject:
-                        self.add_rule(str(pattern), "reject", scope=task_feed_urls)
-                        count_rules += 1
-            
-            # 3. Series - Scope them to task_feed_urls
-            series = task_config.get('series', [])
-            if isinstance(series, list):
-                for s in series:
-                    name = ""
-                    if isinstance(s, str):
-                        name = s
-                    elif isinstance(s, dict):
-                        name = list(s.keys())[0] if s else ""
+                # 0. Profile (qBittorrent)
+                qbit = task_config.get('qbittorrent')
+                if qbit and isinstance(qbit, dict):
+                    host = qbit.get('host', 'localhost')
+                    port = qbit.get('port', 8080)
+                    user = qbit.get('username', '')
+                    pw = qbit.get('password', '')
                     
-                    if name:
-                        pattern = re.escape(name).replace(r"\ ", ".*")
-                        self.add_rule(pattern, "accept", scope=task_feed_urls)
-                        count_rules += 1
+                    url = f"http://{host}:{port}"
+                    if not profile_exists(url, user):
+                        cm.add_profile(f"{task_name} qBit", "qbittorrent", url, user, pw)
+
+                # 1. RSS Feeds (Collect task URLs for scoping)
+                task_feed_urls = []
+                
+                rss_entry = task_config.get('rss')
+                if rss_entry:
+                    url = ""
+                    if isinstance(rss_entry, str):
+                        url = rss_entry
+                    elif isinstance(rss_entry, dict):
+                        url = rss_entry.get('url')
+                    
+                    if url:
+                        task_feed_urls.append(url)
+                        # Avoid nested lock if add_feed uses it.
+                        # Since we are holding lock, we should manually manipulate dict or make add_feed reentrant (RLock handles this).
+                        if url not in self.feeds:
+                            self.feeds[url] = {'alias': f"{task_name} RSS", 'last_update': 0, 'articles': []}
+                            count_feeds += 1
+                
+                inputs = task_config.get('inputs', [])
+                if isinstance(inputs, list):
+                    for inp in inputs:
+                        if isinstance(inp, dict) and 'rss' in inp:
+                            val = inp['rss']
+                            url = ""
+                            if isinstance(val, str):
+                                url = val
+                            elif isinstance(val, dict):
+                                url = val.get('url')
+                            
+                            if url:
+                                task_feed_urls.append(url)
+                                if url not in self.feeds:
+                                    self.feeds[url] = {'alias': f"{task_name} RSS", 'last_update': 0, 'articles': []}
+                                    count_feeds += 1
+
+                # 2. Rules (Regex) - Scope them to task_feed_urls
+                regexp = task_config.get('regexp', {})
+                if isinstance(regexp, dict):
+                    # Accept
+                    accept = regexp.get('accept', [])
+                    if isinstance(accept, list):
+                        for pattern in accept:
+                            self.rules.append({'pattern': str(pattern), 'enabled': True, 'type': 'accept', 'scope': task_feed_urls})
+                            count_rules += 1
+                    # Reject
+                    reject = regexp.get('reject', [])
+                    if isinstance(reject, list):
+                        for pattern in reject:
+                            self.rules.append({'pattern': str(pattern), 'enabled': True, 'type': 'reject', 'scope': task_feed_urls})
+                            count_rules += 1
+                
+                # 3. Series - Scope them to task_feed_urls
+                series = task_config.get('series', [])
+                if isinstance(series, list):
+                    for s in series:
+                        name = ""
+                        if isinstance(s, str):
+                            name = s
+                        elif isinstance(s, dict):
+                            name = list(s.keys())[0] if s else ""
                         
-            # 4. Accept All - Scope them to task_feed_urls
-            if task_config.get('accept_all'):
-                self.add_rule(".*", "accept", scope=task_feed_urls)
-                count_rules += 1
+                        if name:
+                            pattern = re.escape(name).replace(r"\ ", ".*")
+                            self.rules.append({'pattern': pattern, 'enabled': True, 'type': 'accept', 'scope': task_feed_urls})
+                            count_rules += 1
+                            
+                # 4. Accept All - Scope them to task_feed_urls
+                if task_config.get('accept_all'):
+                     self.rules.append({'pattern': ".*", 'enabled': True, 'type': 'accept', 'scope': task_feed_urls})
+                     count_rules += 1
+            
+            self.save()
         
         return count_feeds, count_rules

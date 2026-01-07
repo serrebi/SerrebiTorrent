@@ -29,10 +29,13 @@ class SessionManager:
     def __init__(self):
         if not lt:
             raise RuntimeError("libtorrent not available")
+        
+        self.lock = threading.RLock()
             
         self.state_dir = get_state_dir()
         self.torrents_db_path = os.path.join(self.state_dir, 'torrents.json')
-        self.torrents_db = self._load_torrents_db()
+        with self.lock:
+            self.torrents_db = self._load_torrents_db()
 
         # Create Session
         self.ses = lt.session()
@@ -48,7 +51,8 @@ class SessionManager:
         self.alert_thread = threading.Thread(target=self._alert_loop, daemon=True)
         self.alert_thread.start()
         
-        self.load_state()
+        with self.lock:
+            self.load_state()
 
     def _load_torrents_db(self):
         if os.path.exists(self.torrents_db_path):
@@ -189,9 +193,10 @@ class SessionManager:
             # Update DB with current save path from params if available
             # This ensures we have the latest path even if user moved it (though move is not fully implemented yet)
             if alert.params.save_path:
-                 if ih not in self.torrents_db or self.torrents_db[ih].get('save_path') != alert.params.save_path:
-                      self.torrents_db[ih] = {'save_path': alert.params.save_path, 'added': time.time()}
-                      self._save_torrents_db()
+                 with self.lock:
+                     if ih not in self.torrents_db or self.torrents_db[ih].get('save_path') != alert.params.save_path:
+                          self.torrents_db[ih] = {'save_path': alert.params.save_path, 'added': time.time()}
+                          self._save_torrents_db()
 
         except Exception as e:
             print(f"Error writing resume data: {e}")
@@ -223,21 +228,23 @@ class SessionManager:
         self.ses.add_torrent(params)
         
         if ih:
-            entry = {'save_path': save_path, 'added': time.time()}
-            if file_priorities:
-                entry['priorities'] = list(file_priorities)
-            self.torrents_db[ih] = entry
-            self._save_torrents_db()
+            with self.lock:
+                entry = {'save_path': save_path, 'added': time.time()}
+                if file_priorities:
+                    entry['priorities'] = list(file_priorities)
+                self.torrents_db[ih] = entry
+                self._save_torrents_db()
 
     def update_priorities(self, info_hash, priorities):
-        if info_hash in self.torrents_db:
-            try:
-                # Convert vector to list if needed
-                p_list = list(priorities)
-                self.torrents_db[info_hash]['priorities'] = p_list
-                self._save_torrents_db()
-            except Exception as e:
-                print(f"Error updating priorities for {info_hash}: {e}")
+        with self.lock:
+            if info_hash in self.torrents_db:
+                try:
+                    # Convert vector to list if needed
+                    p_list = list(priorities)
+                    self.torrents_db[info_hash]['priorities'] = p_list
+                    self._save_torrents_db()
+                except Exception as e:
+                    print(f"Error updating priorities for {info_hash}: {e}")
 
     def add_magnet(self, url, save_path):
         params = lt.parse_magnet_uri(url)
@@ -254,8 +261,9 @@ class SessionManager:
         self.ses.add_torrent(params)
 
         if ih:
-             self.torrents_db[ih] = {'save_path': save_path, 'added': time.time()}
-             self._save_torrents_db()
+             with self.lock:
+                 self.torrents_db[ih] = {'save_path': save_path, 'added': time.time()}
+                 self._save_torrents_db()
 
     def load_state(self):
         print("Loading session state...")
@@ -382,7 +390,8 @@ class SessionManager:
         else:
             print("All resume data saved successfully.")
         
-        self._save_torrents_db()
+        with self.lock:
+            self._save_torrents_db()
 
     def _find_handle(self, info_hash_str):
         for h in self.ses.get_torrents():
@@ -418,9 +427,10 @@ class SessionManager:
                     os.remove(r_path)
                 
                 # Remove from DB
-                if info_hash in self.torrents_db:
-                    del self.torrents_db[info_hash]
-                    self._save_torrents_db()
+                with self.lock:
+                    if info_hash in self.torrents_db:
+                        del self.torrents_db[info_hash]
+                        self._save_torrents_db()
                     
             except Exception as e:
                 print(f"Error cleaning up state files for {info_hash}: {e}")

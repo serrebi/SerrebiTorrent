@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any, Dict
 
 from app_paths import get_config_path, get_portable_base_dir
@@ -70,6 +71,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 class ConfigManager:
     def __init__(self) -> None:
+        self.lock = threading.RLock()
         self.config: Dict[str, Any] = self.load_config()
 
     def _normalize(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,59 +147,69 @@ class ConfigManager:
         return cfg
 
     def save_config(self) -> None:
-        _write_json(CONFIG_FILE, self.config)
+        with self.lock:
+            _write_json(CONFIG_FILE, self.config)
 
     def get_preferences(self) -> Dict[str, Any]:
-        return dict(self.config.get("preferences", DEFAULT_PREFERENCES.copy()))
+        with self.lock:
+             return dict(self.config.get("preferences", DEFAULT_PREFERENCES.copy()))
 
     def set_preferences(self, prefs: Dict[str, Any]) -> None:
-        self.config["preferences"] = dict(prefs)
-        self.save_config()
+        with self.lock:
+            self.config["preferences"] = dict(prefs)
+            self.save_config()
 
     def get_profiles(self) -> Dict[str, Any]:
-        profiles = self.config.get("profiles", {})
-        return profiles if isinstance(profiles, dict) else {}
+        with self.lock:
+            profiles = self.config.get("profiles", {})
+            return profiles if isinstance(profiles, dict) else {}
 
     def add_profile(self, name: str, client_type: str, url: str, user: str, password: str) -> str:
         import uuid
 
         pid = str(uuid.uuid4())
-        self.config.setdefault("profiles", {})[pid] = {
-            "name": name,
-            "type": client_type,
-            "url": url,
-            "user": user,
-            "password": password,
-        }
-        self.save_config()
+        with self.lock:
+            self.config.setdefault("profiles", {})[pid] = {
+                "name": name,
+                "type": client_type,
+                "url": url,
+                "user": user,
+                "password": password,
+            }
+            self.save_config()
         return pid
 
     def update_profile(self, pid: str, name: str, client_type: str, url: str, user: str, password: str) -> None:
-        if pid in self.get_profiles():
-            self.config["profiles"][pid].update(
-                {
-                    "name": name,
-                    "type": client_type,
-                    "url": url,
-                    "user": user,
-                    "password": password,
-                }
-            )
-            self.save_config()
+        with self.lock:
+            if pid in self.get_profiles():
+                self.config["profiles"][pid].update(
+                    {
+                        "name": name,
+                        "type": client_type,
+                        "url": url,
+                        "user": user,
+                        "password": password,
+                    }
+                )
+                self.save_config()
 
     def delete_profile(self, pid: str) -> None:
-        if pid in self.get_profiles():
-            del self.config["profiles"][pid]
-            if self.config.get("default_profile") == pid:
-                self.config["default_profile"] = ""
-            self.save_config()
+        with self.lock:
+            if pid in self.get_profiles():
+                del self.config["profiles"][pid]
+                if self.config.get("default_profile") == pid:
+                    self.config["default_profile"] = ""
+                self.save_config()
 
     def get_default_profile_id(self) -> str:
-        return str(self.config.get("default_profile", ""))
+        with self.lock:
+            return str(self.config.get("default_profile", ""))
 
     def set_default_profile_id(self, pid: str) -> None:
-        self.config["default_profile"] = pid
-        self.save_config()
+        with self.lock:
+            self.config["default_profile"] = pid
+            self.save_config()
 
     def get_profile(self, pid: str):
-        return self.get_profiles().get(pid)
+        with self.lock:
+            return self.get_profiles().get(pid)

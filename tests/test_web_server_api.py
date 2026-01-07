@@ -45,9 +45,12 @@ def test_profiles_endpoint(auth_client):
 
 def test_torrents_info_endpoint(auth_client):
     mock_app = MagicMock()
-    mock_app.all_torrents = [
+    torrents_list = [
         {'hash': 'abc', 'name': 'Test', 'size': 1000, 'done': 500, 'state': 1}
     ]
+    mock_app.all_torrents = torrents_list
+    mock_app.get_all_torrents_safe.return_value = torrents_list
+    
     web_server.WEB_CONFIG['app'] = mock_app
     
     rv = auth_client.get('/api/v2/torrents/info')
