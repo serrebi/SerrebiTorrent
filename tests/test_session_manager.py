@@ -1,46 +1,68 @@
-
 import pytest
 import sys
 import os
 from unittest.mock import MagicMock, patch
 
-# Robust mocking of libtorrent
-if 'session_manager' in sys.modules:
-    del sys.modules['session_manager']
-if 'libtorrent' in sys.modules:
-    del sys.modules['libtorrent']
-
-mock_lt = MagicMock()
-sys.modules['libtorrent'] = mock_lt
-
-mock_lt.proxy_type_t = MagicMock()
-mock_lt.proxy_type_t.none = 0
-mock_lt.proxy_type_t.socks4 = 1
-mock_lt.proxy_type_t.socks5 = 2
-mock_lt.proxy_type_t.socks5_pw = 3
-mock_lt.proxy_type_t.http = 4
-mock_lt.proxy_type_t.http_pw = 5
-
-mock_lt.alert = MagicMock()
-mock_lt.alert.category_t = MagicMock()
-mock_lt.alert.category_t.status_notification = 1
-mock_lt.alert.category_t.storage_notification = 2
-mock_lt.alert.category_t.error_notification = 4
-
-mock_lt.resume_data_flags_t = MagicMock()
-mock_lt.resume_data_flags_t.flush_disk_cache = 1
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from session_manager import SessionManager
+@pytest.fixture(autouse=True)
+def mock_libtorrent_environment():
+    """
+    Setup a mocked libtorrent environment for all tests in this module.
+    Restores the original environment afterwards.
+    """
+    # Save original modules
+    original_lt = sys.modules.get('libtorrent')
+    original_sm = sys.modules.get('session_manager')
+    
+    # Create Mock
+    mock_lt = MagicMock()
+    # Setup Enums
+    mock_lt.proxy_type_t = MagicMock()
+    mock_lt.proxy_type_t.none = 0
+    mock_lt.proxy_type_t.socks4 = 1
+    mock_lt.proxy_type_t.socks5 = 2
+    mock_lt.proxy_type_t.socks5_pw = 3
+    mock_lt.proxy_type_t.http = 4
+    mock_lt.proxy_type_t.http_pw = 5
+
+    mock_lt.alert = MagicMock()
+    mock_lt.alert.category_t = MagicMock()
+    mock_lt.alert.category_t.status_notification = 1
+    mock_lt.alert.category_t.storage_notification = 2
+    mock_lt.alert.category_t.error_notification = 4
+
+    mock_lt.resume_data_flags_t = MagicMock()
+    mock_lt.resume_data_flags_t.flush_disk_cache = 1
+    
+    # Patch
+    sys.modules['libtorrent'] = mock_lt
+    # Remove session_manager so it gets re-imported with the mock
+    if 'session_manager' in sys.modules:
+        del sys.modules['session_manager']
+        
+    yield mock_lt
+    
+    # Cleanup
+    if original_lt:
+        sys.modules['libtorrent'] = original_lt
+    else:
+        del sys.modules['libtorrent']
+        
+    if original_sm:
+        sys.modules['session_manager'] = original_sm
+    elif 'session_manager' in sys.modules:
+        del sys.modules['session_manager']
 
 @pytest.fixture
-def session_manager():
+def session_manager(mock_libtorrent_environment):
+    from session_manager import SessionManager
+    
     # Reset singleton
     SessionManager._instance = None
     
-    # Reset mock_lt session
-    mock_lt.session.return_value.reset_mock()
+    # Reset mock_lt session calls
+    mock_libtorrent_environment.session.return_value.reset_mock()
     
     with patch('session_manager.get_state_dir', return_value='.'):
         with patch('os.path.exists', return_value=False):
@@ -48,11 +70,11 @@ def session_manager():
                 MockCM.return_value.get_preferences.return_value = {}
                 with patch('os.listdir', return_value=[]):
                     sm = SessionManager.get_instance()
-                    # Reset mock calls that happened during init so we can test clean
                     sm.ses.reset_mock()
                     return sm
 
 def test_singleton(session_manager):
+    from session_manager import SessionManager
     sm2 = SessionManager.get_instance()
     assert session_manager is sm2
 
@@ -72,7 +94,7 @@ def test_apply_preferences(session_manager):
     assert call_args['upload_rate_limit'] == 2000
     assert call_args['connections_limit'] == 50
 
-def test_add_magnet(session_manager):
+def test_add_magnet(session_manager, mock_libtorrent_environment):
     magnet = "magnet:?xt=urn:btih:abcdef"
     save_path = "/tmp"
     
@@ -80,7 +102,7 @@ def test_add_magnet(session_manager):
     mock_params.info_hashes.v1 = "abcdef"
     mock_params.info_hashes.has_v1.return_value = True
     
-    mock_lt.parse_magnet_uri.return_value = mock_params
+    mock_libtorrent_environment.parse_magnet_uri.return_value = mock_params
     
     with patch.object(session_manager, '_find_handle', return_value=None):
          session_manager.add_magnet(magnet, save_path)
@@ -89,14 +111,14 @@ def test_add_magnet(session_manager):
     assert "abcdef" in session_manager.torrents_db
     assert session_manager.torrents_db["abcdef"]['save_path'] == save_path
 
-def test_remove_torrent(session_manager):
+def test_remove_torrent(session_manager, mock_libtorrent_environment):
     info_hash = "abcdef"
     session_manager.torrents_db[info_hash] = {'save_path': '/tmp'}
     
     mock_handle = MagicMock()
     with patch.object(session_manager, '_find_handle', return_value=mock_handle):
-         mock_lt.remove_flags_t = MagicMock()
-         mock_lt.remove_flags_t.delete_files = 1
+         mock_libtorrent_environment.remove_flags_t = MagicMock()
+         mock_libtorrent_environment.remove_flags_t.delete_files = 1
          
          session_manager.remove_torrent(info_hash)
          
