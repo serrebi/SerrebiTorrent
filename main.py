@@ -769,27 +769,34 @@ class ConnectDialog(wx.Dialog):
         except Exception:
             pass
 
-    def refresh_list(self):
+    def refresh_list(self, select_pid=None):
         self.list_box.Clear()
         self.profiles_map = [] # Index -> ID
         
         profiles = self.cm.get_profiles()
         default_id = self.cm.get_default_profile_id()
         
+        selection_idx = 0
+        
         for pid, p in profiles.items():
             label = p['name']
             if pid == default_id:
                 label += " (Default)"
-            self.list_box.Append(label)
+            idx = self.list_box.Append(label)
             self.profiles_map.append(pid)
+            if select_pid and pid == select_pid:
+                selection_idx = idx
             
-        # Select first if any
+        # Select requested or first if any
         if self.profiles_map:
-            self.list_box.SetSelection(0)
+            if selection_idx < self.list_box.GetCount():
+                self.list_box.SetSelection(selection_idx)
+            else:
+                 self.list_box.SetSelection(0)
 
     def get_selected_id(self):
         sel = self.list_box.GetSelection()
-        if sel != wx.NOT_FOUND:
+        if sel != wx.NOT_FOUND and sel < len(self.profiles_map):
             return self.profiles_map[sel]
         return None
 
@@ -797,8 +804,8 @@ class ConnectDialog(wx.Dialog):
         dlg = ProfileDialog(self)
         if dlg.ShowModal() == wx.ID_OK:
             data = dlg.GetProfileData()
-            self.cm.add_profile(data['name'], data['type'], data['url'], data['user'], data['password'])
-            self.refresh_list()
+            pid = self.cm.add_profile(data['name'], data['type'], data['url'], data['user'], data['password'])
+            self.refresh_list(select_pid=pid)
         dlg.Destroy()
 
     def on_edit(self, event):
@@ -811,7 +818,7 @@ class ConnectDialog(wx.Dialog):
         if dlg.ShowModal() == wx.ID_OK:
             data = dlg.GetProfileData()
             self.cm.update_profile(pid, data['name'], data['type'], data['url'], data['user'], data['password'])
-            self.refresh_list()
+            self.refresh_list(select_pid=pid)
         dlg.Destroy()
 
     def on_delete(self, event):
@@ -3835,6 +3842,14 @@ if __name__ == "__main__":
         print("Starting application...")
         app = wx.App(False) # False = don't redirect stdout/stderr to window
         print("wx.App initialized.")
+
+        # Single Instance Check
+        name = f"SerrebiTorrent-{wx.GetUserId()}"
+        checker = wx.SingleInstanceChecker(name)
+        if checker.IsAnotherRunning():
+            wx.MessageBox("Another instance of SerrebiTorrent is already running.", "Error", wx.OK | wx.ICON_ERROR)
+            sys.exit(0)
+
         frame = MainFrame()
         print("MainFrame initialized.")
         frame.Show()
