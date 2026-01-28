@@ -7,10 +7,10 @@
 
 
 ## Runtime requirements
-- Python 3.12 (64‑bit).
+- Python 3.14 (64‑bit).
 - Core packages: see `requirements.txt`. Libs already installed in the user site-packages.
 - Libtorrent DLL resolution happens in `libtorrent_env.py`. Always call `prepare_libtorrent_dlls()` before importing `libtorrent`.
-- OpenSSL 1.1 DLLs (`libcrypto-1_1*.dll`, `libssl-1_1*.dll`) sit in the repo root and are bundled into the EXE.
+- OpenSSL 3 DLLs (`libcrypto-3-x64.dll`, `libssl-3-x64.dll`) sit in the repo root and are bundled into the EXE (required for libtorrent HTTPS). Legacy 1.1 DLLs remain for compatibility.
 
 ## Threading Model
 - **Blocking I/O:** All network operations (fetching torrents, sending commands like start/stop/remove) MUST be offloaded to a background thread to prevent freezing the GUI.
@@ -29,7 +29,7 @@
 - It also bundles the web UI (`web_static`), OpenSSL DLLs, and other resources into the distribution folder.
 - Hidden imports explicitly include local modules (`clients`, `rss_manager`, `web_server`, etc.) and core dependency sub-components (`werkzeug`, `jinja2`, `urllib3`) to ensure compatibility across different environments.
 - `icon.ico` is conditionally included in the build only if it exists in the root directory.
-- All OpenSSL 1.1 variants are explicitly added (`libssl-1_1*.dll`, `libcrypto-1_1*.dll`); keep these four DLLs in the repo root before building.
+- OpenSSL 3 DLLs are explicitly added (`libssl-3-x64.dll`, `libcrypto-3-x64.dll`); keep them in the repo root before building. Legacy 1.1 DLLs are still bundled for compatibility.
 
 ## Packaging
 - Ship the entire `SerrebiTorrent` folder from the `dist` directory. The main executable is `SerrebiTorrent.exe` inside that folder.

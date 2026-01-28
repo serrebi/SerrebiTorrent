@@ -58,6 +58,8 @@ a = Analysis(
     ['main.py'],
     pathex=[os.path.abspath('.')],
     binaries=[
+        ('libcrypto-3-x64.dll', '.'),
+        ('libssl-3-x64.dll', '.'),
         ('libcrypto-1_1-x64.dll', '.'),
         ('libssl-1_1-x64.dll', '.'),
         ('libcrypto-1_1.dll', '.'),

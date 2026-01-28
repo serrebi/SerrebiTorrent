@@ -40,7 +40,7 @@ If an update fails, check the updater log in `%TEMP%\SerrebiTorrent_update_*.log
 
 ## Release pipeline (automated)
 Prereqs:
-- Python 3.12 + dependencies from `requirements.txt`
+- Python 3.14 + dependencies from `requirements.txt`
 - Git + GitHub CLI (`gh auth login` completed)
 - Code signing cert installed
 - SignTool available (default path used, or set `SIGNTOOL_PATH`)
