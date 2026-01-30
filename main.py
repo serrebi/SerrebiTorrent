@@ -2472,6 +2472,11 @@ class MainFrame(wx.Frame):
         self.rtorrent_remote_prefs_item.Enable(False)
         
         menubar.Append(tools_menu, "&Tools")
+        
+        # ----- Help menu -----
+        help_menu = wx.Menu()
+        about_item = help_menu.Append(wx.ID_ABOUT, "&About SerrebiTorrent", "About this application")
+        menubar.Append(help_menu, "&Help")
 
         self.SetMenuBar(menubar)
 
@@ -2501,6 +2506,9 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.qbit_remote_prefs_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.trans_remote_prefs_item)
         self.Bind(wx.EVT_MENU, self.on_remote_preferences, self.rtorrent_remote_prefs_item)
+        
+        # Help menu
+        self.Bind(wx.EVT_MENU, self.on_about, about_item)
 
         # Keep the remote-preferences menu in sync with connection state.
         self._update_remote_prefs_menu_state()
@@ -2584,6 +2592,17 @@ class MainFrame(wx.Frame):
 
     def on_check_updates(self, event):
         self.check_for_updates(True)
+    
+    def on_about(self, event):
+        from app_version import APP_VERSION
+        info = wx.adv.AboutDialogInfo()
+        info.SetName("SerrebiTorrent")
+        info.SetVersion(APP_VERSION)
+        info.SetDescription("A Windows desktop torrent manager designed for keyboard-first use and screen readers.")
+        info.SetCopyright("Copyright © 2025-2026 serrebi and contributors")
+        info.SetWebSite("https://github.com/serrebi/SerrebiTorrent")
+        info.AddDeveloper("serrebi")
+        wx.adv.AboutBox(info)
 
     def check_for_updates(self, manual=False):
         if self.update_check_in_progress or self.update_install_in_progress:
