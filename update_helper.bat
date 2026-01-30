@@ -126,6 +126,54 @@ if %RC% geq 8 (
     goto :rollback
 )
 
+echo [SerrebiTorrent Update] Cleaning up staging folder...
+if exist "%STAGING_DIR%" (
+    rmdir /s /q "%STAGING_DIR%" >nul 2>nul
+)
+
+rem Extract staging root (parent of STAGING_DIR) for cleanup
+for %%D in ("%STAGING_DIR%\..") do set "STAGING_ROOT=%%~fD"
+echo [SerrebiTorrent Update] Staging root: "%STAGING_ROOT%"
+
+rem Only cleanup staging root if it looks like an update folder
+echo "%STAGING_ROOT%" | findstr /I /C:"_Update_" >nul
+if %errorlevel%==0 (
+    echo [SerrebiTorrent Update] Cleaning up staging root folder...
+    if exist "%STAGING_ROOT%" (
+        rmdir /s /q "%STAGING_ROOT%" >nul 2>nul
+    )
+)
+
+rem Handle backup cleanup based on retention policy
+set "KEEP_BACKUPS=%SERREBITORRENT_KEEP_BACKUPS%"
+if not defined KEEP_BACKUPS set "KEEP_BACKUPS=1"
+
+echo [SerrebiTorrent Update] Backup retention policy: keep %KEEP_BACKUPS% backup(s)
+echo [SerrebiTorrent Update] Backup folder: "%BACKUP_DIR%"
+echo [SerrebiTorrent Update] Backup exists: 
+if exist "%BACKUP_DIR%" (
+    echo YES
+    dir "%BACKUP_DIR%" /A /B
+) else (
+    echo NO
+)
+
+if "%KEEP_BACKUPS%"=="0" (
+    echo [SerrebiTorrent Update] Deleting backup immediately (retention=0)...
+    if exist "%BACKUP_DIR%" (
+        rem Force delete - rmdir should work on a regular folder
+        rmdir /s /q "%BACKUP_DIR%"
+        if exist "%BACKUP_DIR%" (
+            echo [SerrebiTorrent Update] WARNING: Backup folder still exists after delete attempt
+        ) else (
+            echo [SerrebiTorrent Update] Backup folder deleted successfully
+        )
+    )
+) else (
+    rem Schedule backup cleanup after 5-minute grace period, then enforce retention
+    call :schedule_backup_cleanup "%BACKUP_DIR%" "%INSTALL_DIR%" "%KEEP_BACKUPS%"
+)
+
 echo [SerrebiTorrent Update] Launching app...
 start "" "%INSTALL_DIR%\%EXE_NAME%"
 exit /b 0
@@ -138,6 +186,36 @@ if exist "%BACKUP_DIR%" (
 start "" "%INSTALL_DIR%\%EXE_NAME%"
 powershell -NoProfile -InputFormat None -Command "param([string]$log) try { Add-Type -AssemblyName PresentationFramework | Out-Null; $msg = 'SerrebiTorrent update failed.' + \"`n`n\" + 'Log file:' + \"`n\" + $log; [System.Windows.MessageBox]::Show($msg, 'SerrebiTorrent Update', 'OK', 'Error') | Out-Null } catch { }" "%LOG_FILE%" >nul 2>nul
 exit /b 1
+
+:schedule_backup_cleanup
+rem Schedule cleanup of old backups
+set "CLEANUP_BACKUP=%~1"
+set "CLEANUP_INSTALL=%~2"
+set "CLEANUP_KEEP=%~3"
+
+rem Create cleanup script in TEMP
+for /f %%T in ('powershell -NoProfile -InputFormat None -Command "(Get-Date).ToString(\"yyyyMMddHHmmss\")"') do set "CLEANSTAMP=%%T"
+set "CLEANUP_SCRIPT=%TEMP%\SerrebiTorrent_cleanup_!CLEANSTAMP!_!RANDOM!.bat"
+
+echo @echo off > "%CLEANUP_SCRIPT%"
+echo rem Auto-cleanup script for SerrebiTorrent backups >> "%CLEANUP_SCRIPT%"
+echo timeout /t 300 /nobreak ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
+echo. >> "%CLEANUP_SCRIPT%"
+echo rem Clean up the just-created backup after grace period >> "%CLEANUP_SCRIPT%"
+echo if exist "%CLEANUP_BACKUP%" ( >> "%CLEANUP_SCRIPT%"
+echo     rmdir /s /q "%CLEANUP_BACKUP%" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
+echo ) >> "%CLEANUP_SCRIPT%"
+echo. >> "%CLEANUP_SCRIPT%"
+echo rem Enforce backup retention policy >> "%CLEANUP_SCRIPT%"
+echo for %%D in ("%CLEANUP_INSTALL%\.." ^) do set "PARENT=%%%%~fD" >> "%CLEANUP_SCRIPT%"
+echo powershell -NoProfile -InputFormat None -Command "$parent=$env:PARENT; $keep=[int]$env:CLEANUP_KEEP; $pattern='*_backup_*'; $backups=@(Get-ChildItem -Path $parent -Directory ^| Where-Object { $_.Name -match $pattern } ^| Sort-Object Name -Descending); if ($backups.Count -gt $keep) { $backups ^| Select-Object -Skip $keep ^| ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } }" >> "%CLEANUP_SCRIPT%"
+echo. >> "%CLEANUP_SCRIPT%"
+echo rem Self-destruct >> "%CLEANUP_SCRIPT%"
+echo del "%%~f0" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
+
+rem Launch cleanup script detached and hidden
+start /B "" powershell -WindowStyle Hidden -NoProfile -Command "Start-Process cmd -ArgumentList '/c',\"%CLEANUP_SCRIPT%\" -WindowStyle Hidden"
+exit /b 0
 
 :usage
 echo Usage: update_helper.bat ^<pid^> ^<install_dir^> ^<staging_dir^> ^<exe_name^>

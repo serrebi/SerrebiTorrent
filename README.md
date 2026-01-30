@@ -72,10 +72,38 @@ Everything stays reachable by keyboard:
 
 Need to troubleshoot? Logs live under `SerrebiTorrent_Data\logs` next to the EXE/script in portable mode (or per-user app data in installed mode). Open `AGENTS.md` if you need technical or build details.
 
+## Auto-update
+
+SerrebiTorrent includes automatic update functionality:
+
+### Update Process
+1. App checks GitHub releases for newer versions (manual via Tools menu or automatic on startup if enabled)
+2. Downloads update ZIP and verifies SHA-256 checksum and Authenticode signature
+3. Launches hidden helper script that:
+   - Waits for app to exit
+   - Backs up current installation to `<install_dir>_backup_<timestamp>`
+   - Applies update by moving new files to install directory
+   - Restarts the app
+4. Backup cleanup runs automatically:
+   - **Default:** Keeps 1 backup (newest) and deletes it after 5-minute grace period
+   - **Immediate:** Set `SERREBITORRENT_KEEP_BACKUPS=0` to delete backup immediately after successful update
+   - **Multiple:** Set `SERREBITORRENT_KEEP_BACKUPS=N` to keep N most recent backups
+
+### Configuration
+- **Backup Retention:** Set environment variable `SERREBITORRENT_KEEP_BACKUPS` to control how many backup folders to keep (default: 1)
+- **Signing Trust:** Set `SERREBITORRENT_TRUSTED_SIGNING_THUMBPRINTS` to comma-separated list of trusted certificate thumbprints
+
+### Notes
+- The update process runs completely hidden (no CMD windows appear)
+- User data in `SerrebiTorrent_Data` is preserved during updates
+- If an update fails, the backup is automatically restored
+- Backups are cleaned up automatically after a grace period to allow manual rollback if needed
+
 ## Test plan (manual)
 - Build a release with `build_exe.bat release` and extract the ZIP to a folder like `C:\Temp\SerrebiTorrent-old`.
 - Create a newer release (make a small commit, then run `build_exe.bat release` again).
 - Launch the older app, run Tools -> Check for Updates, accept the prompt, and confirm:
-  - The app closes and restarts on the new version.
-  - A backup folder like `<install_dir>_backup_YYYYMMDDHHMMSS` exists next to the install directory.
-  - The status bar reports update status or errors clearly.
+  - The app closes and restarts on the new version
+  - No CMD/console windows appear during the update
+  - After 5 minutes, backup folders are automatically cleaned up (or immediately if `SERREBITORRENT_KEEP_BACKUPS=0`)
+  - The status bar reports update status or errors clearly

@@ -47,5 +47,9 @@
 - The updater accepts a `signing_thumbprint` value in the release manifest so self-signed Authenticode signatures can be trusted when Windows reports UnknownError.
 - Release manifests are generated via `tools/release_manifest.py`, which parses `signtool verify` output to capture the signing thumbprint (override with `SIGN_CERT_THUMBPRINT`).
 - Version bumps in `build_exe.bat` now call `tools/update_version.py` to update `app_version.py` safely (avoids PowerShell quoting pitfalls).
+- Update process runs completely hidden (no CMD windows) via `STARTUPINFO` with `SW_HIDE` flag.
+- Backups are cleaned up automatically: default keeps 1 backup with 5-minute grace period; configure via `SERREBITORRENT_KEEP_BACKUPS` env var.
+- Staging folders (`<AppName>_Update_<timestamp>`) are deleted immediately after successful update.
+- Test updater end-to-end with `python tools\test_updater_e2e.py` or manually with `python tools\test_updater_manual.py`.
 
 Keep edits lean, comment only when code is not self-explanatory, and leave user-facing docs in README.md. Everything technical goes here.
