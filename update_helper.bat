@@ -149,24 +149,13 @@ set "KEEP_BACKUPS=%SERREBITORRENT_KEEP_BACKUPS%"
 if not defined KEEP_BACKUPS set "KEEP_BACKUPS=1"
 
 echo [SerrebiTorrent Update] Backup retention policy: keep %KEEP_BACKUPS% backup(s)
-echo [SerrebiTorrent Update] Backup folder: "%BACKUP_DIR%"
-echo [SerrebiTorrent Update] Backup exists: 
-if exist "%BACKUP_DIR%" (
-    echo YES
-    dir "%BACKUP_DIR%" /A /B
-) else (
-    echo NO
-)
 
 if "%KEEP_BACKUPS%"=="0" (
     echo [SerrebiTorrent Update] Deleting backup immediately (retention=0)...
     if exist "%BACKUP_DIR%" (
-        rem Force delete - rmdir should work on a regular folder
         rmdir /s /q "%BACKUP_DIR%"
         if exist "%BACKUP_DIR%" (
             echo [SerrebiTorrent Update] WARNING: Backup folder still exists after delete attempt
-        ) else (
-            echo [SerrebiTorrent Update] Backup folder deleted successfully
         )
     )
 ) else (
@@ -199,6 +188,7 @@ set "CLEANUP_SCRIPT=%TEMP%\SerrebiTorrent_cleanup_!CLEANSTAMP!_!RANDOM!.bat"
 
 echo @echo off > "%CLEANUP_SCRIPT%"
 echo rem Auto-cleanup script for SerrebiTorrent backups >> "%CLEANUP_SCRIPT%"
+echo set CLEANUP_KEEP=%CLEANUP_KEEP% >> "%CLEANUP_SCRIPT%"
 echo timeout /t 300 /nobreak ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
 echo. >> "%CLEANUP_SCRIPT%"
 echo rem Clean up the just-created backup after grace period >> "%CLEANUP_SCRIPT%"
@@ -214,7 +204,7 @@ echo rem Self-destruct >> "%CLEANUP_SCRIPT%"
 echo del "%%~f0" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
 
 rem Launch cleanup script detached and hidden
-start /B "" powershell -WindowStyle Hidden -NoProfile -Command "Start-Process cmd -ArgumentList '/c',\"%CLEANUP_SCRIPT%\" -WindowStyle Hidden"
+powershell -WindowStyle Hidden -NoProfile -Command "Start-Process -FilePath cmd.exe -ArgumentList '/c','\"%CLEANUP_SCRIPT%\"' -WindowStyle Hidden" >nul 2>nul
 exit /b 0
 
 :usage
