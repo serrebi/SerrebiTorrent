@@ -11,6 +11,13 @@ import time
 import zipfile
 from pathlib import Path
 
+# Set UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    import locale
+    if locale.getpreferredencoding() != 'UTF-8':
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 
 def create_mock_app(app_dir: Path, version: str, exe_name: str = "SerrebiTorrent.exe") -> None:
     """Create a mock application directory with dummy files."""

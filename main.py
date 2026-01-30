@@ -2577,15 +2577,15 @@ class MainFrame(wx.Frame):
             try:
                 web_server.start_web_ui()
             except Exception as e:
-                print(f"Error starting Web UI: {e}")
+                wx.LogMessage(f"Error starting Web UI: {e}")
 
     def _schedule_auto_update_check(self):
         prefs = self.config_manager.get_preferences()
         if self._auto_update_calllater:
             try:
                 self._auto_update_calllater.Stop()
-            except Exception:
-                pass
+            except Exception as e:
+                wx.LogWarning(f"Failed to stop auto-update timer: {e}")
             self._auto_update_calllater = None
         if prefs.get("auto_check_updates", True):
             self._auto_update_calllater = wx.CallLater(3000, self.check_for_updates, False)

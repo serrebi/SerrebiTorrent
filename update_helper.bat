@@ -131,18 +131,7 @@ if exist "%STAGING_DIR%" (
     rmdir /s /q "%STAGING_DIR%" >nul 2>nul
 )
 
-rem Extract staging root (parent of STAGING_DIR) for cleanup
-for %%D in ("%STAGING_DIR%\..") do set "STAGING_ROOT=%%~fD"
-echo [SerrebiTorrent Update] Staging root: "%STAGING_ROOT%"
-
-rem Only cleanup staging root if it looks like an update folder
-echo "%STAGING_ROOT%" | findstr /I /C:"_Update_" >nul
-if %errorlevel%==0 (
-    echo [SerrebiTorrent Update] Cleaning up staging root folder...
-    if exist "%STAGING_ROOT%" (
-        rmdir /s /q "%STAGING_ROOT%" >nul 2>nul
-    )
-)
+rem Staging root cleanup - deferred to scheduled cleanup to avoid script termination issues
 
 rem Handle backup cleanup based on retention policy
 set "KEEP_BACKUPS=%SERREBITORRENT_KEEP_BACKUPS%"
@@ -150,26 +139,26 @@ if not defined KEEP_BACKUPS set "KEEP_BACKUPS=1"
 
 echo [SerrebiTorrent Update] Backup retention policy: keep %KEEP_BACKUPS% backup(s)
 
-if "%KEEP_BACKUPS%"=="0" (
-    echo [SerrebiTorrent Update] Deleting backup immediately (retention=0)...
+rem Simplified backup cleanup logic
+if /i "%KEEP_BACKUPS%"=="0" (
+    echo [SerrebiTorrent Update] Deleting backup immediately retention=0...
+    if exist "%BACKUP_DIR%" rmdir /s /q "%BACKUP_DIR%" >nul 2>&1
     if exist "%BACKUP_DIR%" (
-        rmdir /s /q "%BACKUP_DIR%"
-        if exist "%BACKUP_DIR%" (
-            echo [SerrebiTorrent Update] WARNING: Backup folder still exists after delete attempt
-        )
+        echo [SerrebiTorrent Update] WARNING: Backup folder still exists after delete attempt
     )
 ) else (
     rem Schedule backup cleanup after 5-minute grace period, then enforce retention
-    call :schedule_backup_cleanup "%BACKUP_DIR%" "%INSTALL_DIR%" "%KEEP_BACKUPS%"
+    call :schedule_backup_cleanup "%BACKUP_DIR%" "%INSTALL_DIR%" "%KEEP_BACKUPS%" "%STAGING_DIR%"
 )
 
 echo [SerrebiTorrent Update] Launching app...
 rem Use VBScript for invisible app launch
 set "VBS_LAUNCHER=%TEMP%\SerrebiTorrent_launch_!RUNSTAMP!_!RANDOM!.vbs"
 echo Set WshShell = CreateObject("WScript.Shell") > "%VBS_LAUNCHER%"
-echo WshShell.Run """%INSTALL_DIR%\%EXE_NAME%""", 1, False >> "%VBS_LAUNCHER%"
+echo On Error Resume Next >> "%VBS_LAUNCHER%"
+echo WshShell.Run Chr(34) ^& "%INSTALL_DIR%\%EXE_NAME%" ^& Chr(34), 0, False >> "%VBS_LAUNCHER%"
 echo Set WshShell = Nothing >> "%VBS_LAUNCHER%"
-wscript.exe //nologo "%VBS_LAUNCHER%"
+wscript.exe //nologo "%VBS_LAUNCHER%" >nul 2>nul
 del "%VBS_LAUNCHER%" >nul 2>nul
 exit /b 0
 
@@ -181,18 +170,20 @@ if exist "%BACKUP_DIR%" (
 rem Use VBScript for invisible app launch
 set "VBS_LAUNCHER=%TEMP%\SerrebiTorrent_launch_!RUNSTAMP!_!RANDOM!.vbs"
 echo Set WshShell = CreateObject("WScript.Shell") > "%VBS_LAUNCHER%"
-echo WshShell.Run """%INSTALL_DIR%\%EXE_NAME%""", 1, False >> "%VBS_LAUNCHER%"
+echo On Error Resume Next >> "%VBS_LAUNCHER%"
+echo WshShell.Run Chr(34) ^& "%INSTALL_DIR%\%EXE_NAME%" ^& Chr(34), 0, False >> "%VBS_LAUNCHER%"
 echo Set WshShell = Nothing >> "%VBS_LAUNCHER%"
-wscript.exe //nologo "%VBS_LAUNCHER%"
+wscript.exe //nologo "%VBS_LAUNCHER%" >nul 2>nul
 del "%VBS_LAUNCHER%" >nul 2>nul
 powershell -NoProfile -InputFormat None -Command "param([string]$log) try { Add-Type -AssemblyName PresentationFramework | Out-Null; $msg = 'SerrebiTorrent update failed.' + \"`n`n\" + 'Log file:' + \"`n\" + $log; [System.Windows.MessageBox]::Show($msg, 'SerrebiTorrent Update', 'OK', 'Error') | Out-Null } catch { }" "%LOG_FILE%" >nul 2>nul
 exit /b 1
 
 :schedule_backup_cleanup
-rem Schedule cleanup of old backups
+rem Schedule cleanup of old backups and staging folder
 set "CLEANUP_BACKUP=%~1"
 set "CLEANUP_INSTALL=%~2"
 set "CLEANUP_KEEP=%~3"
+set "CLEANUP_STAGING=%~4"
 
 rem Create cleanup script in TEMP
 for /f %%T in ('powershell -NoProfile -InputFormat None -Command "(Get-Date).ToString(\"yyyyMMddHHmmss\")"') do set "CLEANSTAMP=%%T"
@@ -200,7 +191,8 @@ set "CLEANUP_SCRIPT=%TEMP%\SerrebiTorrent_cleanup_!CLEANSTAMP!_!RANDOM!.bat"
 
 echo @echo off > "%CLEANUP_SCRIPT%"
 echo rem Auto-cleanup script for SerrebiTorrent backups >> "%CLEANUP_SCRIPT%"
-echo set CLEANUP_KEEP=%CLEANUP_KEEP% >> "%CLEANUP_SCRIPT%"
+echo set "CLEANUP_KEEP=%CLEANUP_KEEP%" >> "%CLEANUP_SCRIPT%"
+echo set "CLEANUP_STAGING=%CLEANUP_STAGING%" >> "%CLEANUP_SCRIPT%"
 echo timeout /t 300 /nobreak ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
 echo. >> "%CLEANUP_SCRIPT%"
 echo rem Clean up the just-created backup after grace period >> "%CLEANUP_SCRIPT%"
@@ -209,11 +201,17 @@ echo     rmdir /s /q "%CLEANUP_BACKUP%" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
 echo ) >> "%CLEANUP_SCRIPT%"
 echo. >> "%CLEANUP_SCRIPT%"
 echo rem Enforce backup retention policy >> "%CLEANUP_SCRIPT%"
-echo for %%D in ("%CLEANUP_INSTALL%\.." ^) do set "PARENT=%%%%~fD" >> "%CLEANUP_SCRIPT%"
+echo for %%%%D in ("%CLEANUP_INSTALL%\.."^) do set "PARENT=%%%%~fD" >> "%CLEANUP_SCRIPT%"
 echo powershell -NoProfile -InputFormat None -Command "$parent=$env:PARENT; $keep=[int]$env:CLEANUP_KEEP; $pattern='*_backup_*'; $backups=@(Get-ChildItem -Path $parent -Directory ^| Where-Object { $_.Name -match $pattern } ^| Sort-Object Name -Descending); if ($backups.Count -gt $keep) { $backups ^| Select-Object -Skip $keep ^| ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue } }" >> "%CLEANUP_SCRIPT%"
 echo. >> "%CLEANUP_SCRIPT%"
+echo rem Clean up staging root folder >> "%CLEANUP_SCRIPT%"
+echo if defined CLEANUP_STAGING ( >> "%CLEANUP_SCRIPT%"
+echo     for %%%%D in ("%CLEANUP_STAGING%\.."^) do set "STAGING_ROOT=%%%%~fD" >> "%CLEANUP_SCRIPT%"
+echo     if exist "%%STAGING_ROOT%%" rmdir /s /q "%%STAGING_ROOT%%" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
+echo ) >> "%CLEANUP_SCRIPT%"
+echo. >> "%CLEANUP_SCRIPT%"
 echo rem Self-destruct >> "%CLEANUP_SCRIPT%"
-echo del "%%~f0" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
+echo del "%%%%~f0" ^>nul 2^>nul >> "%CLEANUP_SCRIPT%"
 
 rem Launch cleanup script detached and hidden
 powershell -WindowStyle Hidden -NoProfile -Command "Start-Process -FilePath cmd.exe -ArgumentList '/c','\"%CLEANUP_SCRIPT%\"' -WindowStyle Hidden" >nul 2>nul
