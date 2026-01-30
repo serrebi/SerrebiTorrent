@@ -2707,7 +2707,7 @@ class MainFrame(wx.Frame):
             
             # Create a VBScript to run the batch file invisibly
             vbs_launcher = os.path.join(staging_root, "launch_update.vbs")
-            vbs_content = f'CreateObject("WScript.Shell").Run """"{bat_launcher}"""", 0, False\n'
+            vbs_content = f'CreateObject("WScript.Shell").Run Chr(34) & "{bat_launcher}" & Chr(34), 0, False\n'
             with open(vbs_launcher, "w") as f:
                 f.write(vbs_content)
             
