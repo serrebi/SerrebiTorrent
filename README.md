@@ -2,6 +2,8 @@
 
 SerrebiTorrent is a Windows desktop torrent manager designed for keyboard-first use and screen readers. It can manage torrents on this PC (local libtorrent) or control a remote client (qBittorrent, Transmission, rTorrent).
 
+**Latest:** v1.5.33 - Fixed CMD window flash during updates
+
 ## What you get
 - Connect to local libtorrent, rTorrent (SCGI/XML-RPC), qBittorrent, or Transmission from one interface.
 - Live download/upload speeds, progress, ratio, tracker host, and status messages for each torrent.
