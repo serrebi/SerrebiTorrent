@@ -131,12 +131,13 @@ class UpdateTesterApp:
         import subprocess
         
         # Use the same launch method as the real updater
+        helper_args = f'"{self.staging_root / "update_helper.bat"}" 999999 "{self.install_dir}" "{self.staging_dir}" "SerrebiTorrent.exe"'
         helper_cmd = [
-            str(self.staging_root / "update_helper.bat"),
-            "999999",  # dummy PID
-            str(self.install_dir),
-            str(self.staging_dir),
-            "SerrebiTorrent.exe"
+            "powershell",
+            "-WindowStyle", "Hidden",
+            "-NoProfile",
+            "-Command",
+            f"Start-Process -FilePath cmd.exe -ArgumentList '/c', '{helper_args}' -WindowStyle Hidden -WorkingDirectory '{self.test_dir}'"
         ]
         
         # Set environment for immediate cleanup
@@ -153,7 +154,6 @@ class UpdateTesterApp:
             helper_cmd,
             creationflags=flags,
             startupinfo=startupinfo,
-            cwd=str(self.test_dir),
             env=env
         )
         

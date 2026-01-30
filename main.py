@@ -2680,12 +2680,14 @@ class MainFrame(wx.Frame):
             helper_copy = os.path.join(staging_root, "update_helper.bat")
             shutil.copy2(helper_src, helper_copy)
 
+            # Launch helper via PowerShell with -WindowStyle Hidden to prevent any CMD flash
+            helper_args = f'"{helper_copy}" {os.getpid()} "{install_dir}" "{new_dir}" "{updater.APP_EXE_NAME}"'
             helper_cmd = [
-                str(helper_copy),
-                str(os.getpid()),
-                str(install_dir),
-                str(new_dir),
-                updater.APP_EXE_NAME
+                "powershell",
+                "-WindowStyle", "Hidden",
+                "-NoProfile",
+                "-Command",
+                f"Start-Process -FilePath cmd.exe -ArgumentList '/c', '{helper_args}' -WindowStyle Hidden -WorkingDirectory '{parent_dir}'"
             ]
             
             startupinfo = subprocess.STARTUPINFO()
@@ -2696,8 +2698,7 @@ class MainFrame(wx.Frame):
             subprocess.Popen(
                 helper_cmd,
                 creationflags=flags,
-                startupinfo=startupinfo,
-                cwd=parent_dir
+                startupinfo=startupinfo
             )
             wx.CallAfter(self._on_update_started)
         except Exception as e:
