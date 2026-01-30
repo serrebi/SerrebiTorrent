@@ -2680,25 +2680,26 @@ class MainFrame(wx.Frame):
             helper_copy = os.path.join(staging_root, "update_helper.bat")
             shutil.copy2(helper_src, helper_copy)
 
-            # Launch helper via PowerShell with -WindowStyle Hidden to prevent any CMD flash
-            helper_args = f'"{helper_copy}" {os.getpid()} "{install_dir}" "{new_dir}" "{updater.APP_EXE_NAME}"'
-            helper_cmd = [
-                "powershell",
-                "-WindowStyle", "Hidden",
-                "-NoProfile",
-                "-Command",
-                f"Start-Process -FilePath cmd.exe -ArgumentList '/c', '{helper_args}' -WindowStyle Hidden -WorkingDirectory '{parent_dir}'"
-            ]
+            # Create a VBScript launcher for completely invisible execution
+            vbs_launcher = os.path.join(staging_root, "launch_update.vbs")
+            vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "cmd.exe /c """"{helper_copy}"""" {os.getpid()} """"{install_dir}"""" """"{new_dir}"""" """"{updater.APP_EXE_NAME}""""", 0, False
+Set WshShell = Nothing
+'''
+            with open(vbs_launcher, "w") as f:
+                f.write(vbs_content)
             
+            # Launch VBScript with hidden window
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0  # SW_HIDE
             
             flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
             subprocess.Popen(
-                helper_cmd,
+                ["wscript.exe", "//nologo", vbs_launcher],
                 creationflags=flags,
-                startupinfo=startupinfo
+                startupinfo=startupinfo,
+                cwd=parent_dir
             )
             wx.CallAfter(self._on_update_started)
         except Exception as e:

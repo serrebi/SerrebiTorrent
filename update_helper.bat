@@ -164,7 +164,13 @@ if "%KEEP_BACKUPS%"=="0" (
 )
 
 echo [SerrebiTorrent Update] Launching app...
-start "" "%INSTALL_DIR%\%EXE_NAME%"
+rem Use VBScript for invisible app launch
+set "VBS_LAUNCHER=%TEMP%\SerrebiTorrent_launch_!RUNSTAMP!_!RANDOM!.vbs"
+echo Set WshShell = CreateObject("WScript.Shell") > "%VBS_LAUNCHER%"
+echo WshShell.Run """%INSTALL_DIR%\%EXE_NAME%""", 1, False >> "%VBS_LAUNCHER%"
+echo Set WshShell = Nothing >> "%VBS_LAUNCHER%"
+wscript.exe //nologo "%VBS_LAUNCHER%"
+del "%VBS_LAUNCHER%" >nul 2>nul
 exit /b 0
 
 :rollback
@@ -172,7 +178,13 @@ echo [SerrebiTorrent Update] Update failed. Restoring backup...
 if exist "%BACKUP_DIR%" (
     robocopy "%BACKUP_DIR%" "%INSTALL_DIR%" /E /MOVE /R:3 /W:1 /NFL /NDL /XD SerrebiTorrent_Data /XF config.json
 )
-start "" "%INSTALL_DIR%\%EXE_NAME%"
+rem Use VBScript for invisible app launch
+set "VBS_LAUNCHER=%TEMP%\SerrebiTorrent_launch_!RUNSTAMP!_!RANDOM!.vbs"
+echo Set WshShell = CreateObject("WScript.Shell") > "%VBS_LAUNCHER%"
+echo WshShell.Run """%INSTALL_DIR%\%EXE_NAME%""", 1, False >> "%VBS_LAUNCHER%"
+echo Set WshShell = Nothing >> "%VBS_LAUNCHER%"
+wscript.exe //nologo "%VBS_LAUNCHER%"
+del "%VBS_LAUNCHER%" >nul 2>nul
 powershell -NoProfile -InputFormat None -Command "param([string]$log) try { Add-Type -AssemblyName PresentationFramework | Out-Null; $msg = 'SerrebiTorrent update failed.' + \"`n`n\" + 'Log file:' + \"`n\" + $log; [System.Windows.MessageBox]::Show($msg, 'SerrebiTorrent Update', 'OK', 'Error') | Out-Null } catch { }" "%LOG_FILE%" >nul 2>nul
 exit /b 1
 
