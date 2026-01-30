@@ -2699,12 +2699,15 @@ class MainFrame(wx.Frame):
             helper_copy = os.path.join(staging_root, "update_helper.bat")
             shutil.copy2(helper_src, helper_copy)
 
-            # Create a VBScript launcher for completely invisible execution
+            # Create a simple batch launcher for the update
+            bat_launcher = os.path.join(staging_root, "launch_update.bat")
+            bat_content = f'@echo off\ncall "{helper_copy}" {os.getpid()} "{install_dir}" "{new_dir}" "{updater.APP_EXE_NAME}"\n'
+            with open(bat_launcher, "w") as f:
+                f.write(bat_content)
+            
+            # Create a VBScript to run the batch file invisibly
             vbs_launcher = os.path.join(staging_root, "launch_update.vbs")
-            vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "cmd.exe /c """"{helper_copy}"""" {os.getpid()} """"{install_dir}"""" """"{new_dir}"""" """"{updater.APP_EXE_NAME}""""", 0, False
-Set WshShell = Nothing
-'''
+            vbs_content = f'CreateObject("WScript.Shell").Run """"{bat_launcher}"""", 0, False\n'
             with open(vbs_launcher, "w") as f:
                 f.write(vbs_content)
             
