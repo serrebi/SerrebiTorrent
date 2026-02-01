@@ -380,10 +380,23 @@ class SessionManager:
         if count == 0:
             return
 
-        # Wait for saves to complete with a timeout (e.g., 10 seconds)
+        # Actively poll for save_resume_data alerts instead of relying on background thread
+        # This ensures resume data is saved even during shutdown
         start_time = time.time()
         while self.pending_saves and time.time() - start_time < 10:
-            time.sleep(0.1)
+            try:
+                if self.ses.wait_for_alert(500):  # 500ms timeout
+                    alerts = self.ses.pop_alerts()
+                    for alert in alerts:
+                        if isinstance(alert, lt.save_resume_data_alert):
+                            self._handle_save_resume(alert)
+                        elif isinstance(alert, lt.save_resume_data_failed_alert):
+                            ih = self._info_hash_key(alert.params.info_hashes)
+                            if ih:
+                                self.pending_saves.discard(ih)
+            except Exception as e:
+                print(f"Error processing alerts during save: {e}")
+                time.sleep(0.1)
             
         if self.pending_saves:
             print(f"Timed out waiting for {len(self.pending_saves)} resume data saves.")
