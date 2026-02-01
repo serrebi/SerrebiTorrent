@@ -18,7 +18,7 @@ import json
 import requests # Added for downloading torrent files from URL
 import concurrent.futures
 
-from clients import RTorrentClient, QBittorrentClient, TransmissionClient, LocalClient
+from clients import RTorrentClient, QBittorrentClient, TransmissionClient, LocalClient, safe_encode_url
 from config_manager import ConfigManager
 from session_manager import SessionManager
 from rss_manager import RSSManager
@@ -3352,7 +3352,7 @@ class MainFrame(wx.Frame):
 
     def _download_and_add_torrent(self, url, default_path):
         try:
-            r = requests.get(url, timeout=30)
+            r = requests.get(safe_encode_url(url), timeout=30)
             r.raise_for_status()
             data = r.content
             wx.CallAfter(self._show_add_after_download, data, default_path)

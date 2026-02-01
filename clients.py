@@ -3,9 +3,17 @@
 import abc
 import binascii
 import os
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import requests
+
+
+def safe_encode_url(url):
+    """Encode special characters (like brackets) in URL path for requests compatibility."""
+    parsed = urlparse(url)
+    # Encode the path, preserving slashes
+    encoded_path = quote(parsed.path, safe='/:@')
+    return urlunparse((parsed.scheme, parsed.netloc, encoded_path, parsed.params, parsed.query, parsed.fragment))
 
 from libtorrent_env import prepare_libtorrent_dlls
 
@@ -685,7 +693,7 @@ class LocalClient(BaseClient):
         if u.startswith("magnet:"):
             self.m.add_magnet(u, fp)
         else:
-            r = requests.get(u, timeout=30)
+            r = requests.get(safe_encode_url(u), timeout=30)
             r.raise_for_status()
             self.m.add_torrent_file(r.content, fp)
     def add_torrent_file(self, c, sp=None, pr=None): self.m.add_torrent_file(c, sp or self._edp(), pr)
